@@ -1,0 +1,33 @@
+# Terraform: local state (it holds resource details), provider cache and the
+# per-machine variables (admin IP). The lock file and *.tfvars.example are committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+*.tfplan
+
+# Local evidence of test runs (logs with the account ID and the admin IP)
+preuves/
+
+# AWS access keys downloaded from the IAM console
+*accessKeys*.csv
+*credentials*.csv
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
