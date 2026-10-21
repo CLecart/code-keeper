@@ -1,0 +1,99 @@
+- name: Install the GitLab prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - openssh-server
+      - ca-certificates
+      - tzdata
+      - perl
+    state: present
+
+- name: Add the GitLab CE package repository
+  ansible.builtin.deb822_repository:
+    name: gitlab_gitlab-ce
+    types: deb
+    uris: "https://packages.gitlab.com/gitlab/gitlab-ce/ubuntu/{{ ansible_facts['distribution_release'] }}"
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: main
+    signed_by: https://packages.gitlab.com/gpgkey/gpg.key
+  register: gitlab_repository
+
+- name: Refresh the package index
+  ansible.builtin.apt:
+    update_cache: true
+  when: gitlab_repository is changed
+
+- name: Create the TLS directory
+  ansible.builtin.file:
+    path: /etc/gitlab/ssl
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Full chain as NGINX expects it: server certificate first, then the CA.
+- name: Install the GitLab certificate chain
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', pki_dir + '/gitlab.crt') }}\n{{ lookup('ansible.builtin.file', pki_ca_cert) }}\n"
+    dest: "/etc/gitlab/ssl/{{ gitlab_host }}.crt"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload the GitLab certificate
+
+- name: Install the GitLab private key
+  ansible.builtin.copy:
+    src: "{{ pki_dir }}/gitlab.key"
+    dest: "/etc/gitlab/ssl/{{ gitlab_host }}.key"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Reload the GitLab certificate
+
+- name: Write the GitLab configuration
+  ansible.builtin.template:
+    src: gitlab.rb.j2
+    dest: /etc/gitlab/gitlab.rb
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Reconfigure GitLab
+
+# The package runs its first reconfigure itself (about 5 minutes) and seeds the
+# root password from GITLAB_ROOT_PASSWORD, used on the very first start only.
+- name: Install GitLab CE {{ gitlab_version }}
+  ansible.builtin.apt:
+    name: "gitlab-ce={{ gitlab_version }}"
+    state: present
+    allow_change_held_packages: true
+  environment:
+    GITLAB_ROOT_PASSWORD: "{{ vault_gitlab_root_password }}"
+  no_log: true
+
+- name: Hold GitLab at the pinned version
+  ansible.builtin.dpkg_selections:
+    name: gitlab-ce
+    selection: hold
+
+- name: Apply the pending configuration changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait until GitLab answers over HTTPS
+  ansible.builtin.uri:
+    url: "{{ gitlab_url }}/users/sign_in"
+    ca_path: "{{ pki_ca_cert }}"
+  delegate_to: localhost
+  become: false
+  register: gitlab_sign_in
+  until: gitlab_sign_in.status == 200
+  retries: 60
+  delay: 10
+
+- name: Prepare the API token of Ansible
+  ansible.builtin.include_tasks: api_token.yml
+
+- name: Apply the instance settings
+  ansible.builtin.include_tasks: settings.yml
+
+- name: Create the user accounts
+  ansible.builtin.include_tasks: users.yml

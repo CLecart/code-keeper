@@ -1,0 +1,33 @@
+- name: Read the instance settings
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/application/settings"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+  delegate_to: localhost
+  become: false
+  register: gitlab_current_settings
+  no_log: true
+
+- name: List the settings that differ from the wanted ones
+  ansible.builtin.set_fact:
+    # A wanted {key, value} pair absent from the current settings is a change.
+    gitlab_settings_to_change: >-
+      {{ gitlab_settings | dict2items
+         | difference(gitlab_current_settings.json | dict2items)
+         | map(attribute='key') | list }}
+
+- name: Update the instance settings ({{ gitlab_settings_to_change | join(', ') or 'none' }})
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/application/settings"
+    method: PUT
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body: "{{ gitlab_settings }}"
+  delegate_to: localhost
+  become: false
+  when: gitlab_settings_to_change | length > 0
+  changed_when: true
+  no_log: true

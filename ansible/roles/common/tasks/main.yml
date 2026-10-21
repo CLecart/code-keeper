@@ -1,0 +1,35 @@
+- name: Install the security updates tooling
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - unattended-upgrades
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Ubuntu applies its security updates every day; GitLab and the runner are held
+# at their pinned versions and upgraded by this playbook only.
+- name: Enable the daily automatic security updates
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    mode: "0644"
+
+- name: Upgrade the installed packages
+  ansible.builtin.apt:
+    upgrade: safe
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Check whether an upgrade needs a reboot
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: common_reboot_required
+
+- name: Reboot after a kernel or system library upgrade
+  ansible.builtin.reboot:
+    reboot_timeout: 600
+  when: common_reboot_required.stat.exists

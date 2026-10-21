@@ -1,0 +1,8 @@
+- name: Reconfigure GitLab
+  ansible.builtin.command: gitlab-ctl reconfigure
+  changed_when: true
+
+# A new certificate only needs NGINX to reload it.
+- name: Reload the GitLab certificate
+  ansible.builtin.command: gitlab-ctl hup nginx
+  changed_when: true

@@ -1,0 +1,28 @@
+# GitLab is reached through its Elastic IP: there is no domain name, so the
+# certificate comes from the project certificate authority (roles/pki).
+gitlab_host: "{{ hostvars[groups['gitlab'][0]]['ansible_host'] }}"
+gitlab_url: "https://{{ gitlab_host }}"
+gitlab_api_url: "{{ gitlab_url }}/api/v4"
+
+# Certificate authority kept on the admin machine; its private key never leaves it.
+pki_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.local/share/code-keeper/pki"
+pki_ca_cert: "{{ pki_dir }}/ca.crt"
+
+# Pinned versions, upgraded on purpose by changing them here and re-running the playbook.
+gitlab_version: "19.5.0-ce.0"
+gitlab_runner_version: "19.5.0-1"
+
+# Accounts created by the playbook. Passwords are in the vault (vault.yml).
+gitlab_users:
+  - username: clecart
+    name: CLecart
+    email: clecart@example.com
+    admin: true
+  - username: developer
+    name: Developer
+    email: developer@example.com
+    admin: false
+  - username: stakeholder
+    name: Stakeholder
+    email: stakeholder@example.com
+    admin: false

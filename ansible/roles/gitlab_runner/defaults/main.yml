@@ -1,0 +1,5 @@
+runner_name: code-keeper-runner
+runner_tags: docker,aws
+# Two jobs at a time on the 4 GiB machine.
+runner_concurrent: 2
+runner_default_image: alpine:3.23

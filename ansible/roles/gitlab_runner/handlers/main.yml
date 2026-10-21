@@ -1,0 +1,4 @@
+- name: Restart GitLab Runner
+  ansible.builtin.systemd_service:
+    name: gitlab-runner
+    state: restarted

@@ -1,0 +1,28 @@
+# Instance settings applied through the API (PUT /application/settings).
+gitlab_settings:
+  # Accounts are created by this playbook only.
+  signup_enabled: false
+  minimum_password_length: 12
+  # Nothing is public on this instance.
+  default_project_visibility: private
+  default_group_visibility: private
+  default_snippet_visibility: private
+  restricted_visibility_levels:
+    - public
+  # New projects start with a protected main branch: only Maintainers push or
+  # merge, nobody force-pushes.
+  default_branch_name: main
+  default_branch_protection_defaults:
+    allowed_to_push:
+      - access_level: 40
+    allow_force_push: false
+    allowed_to_merge:
+      - access_level: 40
+    developer_can_initial_push: false
+  # Pipelines come from each repository's .gitlab-ci.yml, never from Auto DevOps.
+  auto_devops_enabled: false
+  # Runners are created through the API; the legacy registration token is off.
+  allow_runner_registration_token: false
+  max_artifacts_size: 100
+  default_artifacts_expire_in: 7 days
+  gravatar_enabled: false

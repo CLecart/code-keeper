@@ -1,0 +1,147 @@
+- name: Add the Docker package repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: https://download.docker.com/linux/ubuntu
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: stable
+    signed_by: https://download.docker.com/linux/ubuntu/gpg
+  register: runner_docker_repository
+
+- name: Add the GitLab Runner package repository
+  ansible.builtin.deb822_repository:
+    name: runner_gitlab-runner
+    types: deb
+    uris: https://packages.gitlab.com/runner/gitlab-runner/ubuntu
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: main
+    signed_by: https://packages.gitlab.com/gpgkey/gpg.key
+  register: runner_gitlab_repository
+
+- name: Refresh the package index
+  ansible.builtin.apt:
+    update_cache: true
+  when: runner_docker_repository is changed or runner_gitlab_repository is changed
+
+- name: Install Docker Engine (executor of the CI jobs)
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+    state: present
+
+- name: Start Docker at boot
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Install GitLab Runner {{ gitlab_runner_version }}
+  ansible.builtin.apt:
+    name:
+      - "gitlab-runner={{ gitlab_runner_version }}"
+      - "gitlab-runner-helper-images={{ gitlab_runner_version }}"
+    state: present
+    allow_change_held_packages: true
+
+- name: Hold GitLab Runner at the pinned version
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - gitlab-runner
+    - gitlab-runner-helper-images
+
+- name: Create the certificates directory
+  ansible.builtin.file:
+    path: /etc/gitlab-runner/certs
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Trust the project CA for GitLab
+  ansible.builtin.copy:
+    src: "{{ pki_ca_cert }}"
+    dest: /etc/gitlab-runner/certs/ca.crt
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart GitLab Runner
+
+- name: Read the current runner configuration
+  ansible.builtin.slurp:
+    src: /etc/gitlab-runner/config.toml
+  register: runner_config
+  failed_when: false
+
+- name: Keep the authentication token of the registered runner
+  ansible.builtin.set_fact:
+    runner_token: "{{ (runner_config.content | b64decode | regex_search('token = \"(glrt-[^\"]+)\"', '\\1') | first) }}"
+  when:
+    - runner_config.content is defined
+    - runner_config.content | b64decode is search('token = \"glrt-')
+  no_log: true
+
+# Runner creation through the API (the registration token workflow is disabled).
+# The authentication token is only returned once, then lives in config.toml.
+- name: Create the instance runner in GitLab
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/user/runners"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body:
+      runner_type: instance_type
+      description: "{{ runner_name }}"
+      tag_list: "{{ runner_tags }}"
+      run_untagged: true
+    status_code: 201
+  delegate_to: localhost
+  become: false
+  register: runner_created
+  when: runner_token is not defined
+  changed_when: true
+  no_log: true
+
+- name: Use the token of the new runner
+  ansible.builtin.set_fact:
+    runner_token: "{{ runner_created.json.token }}"
+  when: runner_created is changed
+  no_log: true
+
+- name: Write the runner configuration
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: /etc/gitlab-runner/config.toml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart GitLab Runner
+  no_log: true
+
+- name: Start GitLab Runner at boot
+  ansible.builtin.systemd_service:
+    name: gitlab-runner
+    enabled: true
+    state: started
+
+- name: Apply the pending restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Check that GitLab accepts the runner
+  ansible.builtin.command: gitlab-runner verify
+  register: runner_verify
+  changed_when: false
+  failed_when: runner_verify.rc != 0 or 'is valid' not in runner_verify.stderr + runner_verify.stdout
+
+# Old images and volumes of finished jobs fill the 30 GB disk otherwise.
+- name: Clean the Docker cache of the jobs every week
+  ansible.builtin.cron:
+    name: clear-docker-cache
+    special_time: weekly
+    job: /usr/share/gitlab-runner/clear-docker-cache prune

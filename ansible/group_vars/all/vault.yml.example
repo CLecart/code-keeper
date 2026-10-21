@@ -1,0 +1,10 @@
+# Shape of vault.yml. The real file is generated with random values by
+# Scripts/init-secrets.sh, encrypted with Ansible Vault and ignored by Git.
+# Read it with: ansible-vault view group_vars/all/vault.yml
+vault_gitlab_root_password: "<random, 24 characters>"
+# Personal access token of root used by Ansible for the API (exactly 20 characters).
+vault_gitlab_api_token: "<random, 20 characters>"
+vault_gitlab_user_passwords:
+  clecart: "<random, 24 characters>"
+  developer: "<random, 24 characters>"
+  stakeholder: "<random, 24 characters>"

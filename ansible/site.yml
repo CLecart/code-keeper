@@ -1,0 +1,28 @@
+# Deploys the GitLab instance and its runner on the two machines created by
+# bootstrap/. Run from the ansible/ directory:
+#   ansible-playbook site.yml
+#   ansible-playbook site.yml --list-tasks
+
+- name: Create the project certificate authority on the admin machine
+  hosts: controller
+  gather_facts: false
+  roles:
+    - pki
+
+- name: Update the base system of both machines
+  hosts: gitlab:runners
+  become: true
+  roles:
+    - common
+
+- name: Install and configure GitLab
+  hosts: gitlab
+  become: true
+  roles:
+    - gitlab
+
+- name: Install and register the GitLab Runner
+  hosts: runners
+  become: true
+  roles:
+    - gitlab_runner

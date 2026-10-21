@@ -1,0 +1,27 @@
+# Managed by Ansible (roles/gitlab/templates/gitlab.rb.j2): local edits are overwritten.
+external_url '{{ gitlab_url }}'
+
+# HTTPS with the certificate of the project CA, read from the default location
+# /etc/gitlab/ssl/{{ gitlab_host }}.crt and .key. No domain name, so no Let's Encrypt.
+letsencrypt['enable'] = false
+gitlab_rails['nginx']['redirect_http_to_https'] = true
+
+# The first root password comes from the vault at installation time and is
+# neither displayed nor written to /etc/gitlab/initial_root_password.
+gitlab_rails['display_initial_root_password'] = false
+gitlab_rails['store_initial_root_password'] = false
+
+gitlab_rails['time_zone'] = 'Europe/Paris'
+
+# Features this project does not use: images go to Amazon ECR, deployments use
+# kubectl from the pipelines, and there is no mail server.
+registry['enable'] = false
+gitlab_rails['registry_enabled'] = false
+gitlab_kas['enable'] = false
+gitlab_rails['gitlab_email_enabled'] = false
+
+# The bundled Prometheus and exporters are off to leave the 8 GiB to GitLab.
+prometheus_monitoring['enable'] = false
+
+# Backups (gitlab-backup create) are kept 7 days.
+gitlab_rails['backup_keep_time'] = 604800

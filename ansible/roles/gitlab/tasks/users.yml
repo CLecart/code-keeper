@@ -1,0 +1,38 @@
+- name: Look up the user accounts
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users?username={{ item.username }}"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+  delegate_to: localhost
+  become: false
+  loop: "{{ gitlab_users }}"
+  loop_control:
+    label: "{{ item.username }}"
+  register: gitlab_user_lookups
+
+# Created once; a password changed later in GitLab is not reset by the playbook.
+- name: Create the missing user accounts
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body:
+      username: "{{ item.item.username }}"
+      name: "{{ item.item.name }}"
+      email: "{{ item.item.email }}"
+      password: "{{ vault_gitlab_user_passwords[item.item.username] }}"
+      admin: "{{ item.item.admin }}"
+      skip_confirmation: true
+    status_code: 201
+  delegate_to: localhost
+  become: false
+  loop: "{{ gitlab_user_lookups.results }}"
+  loop_control:
+    label: "{{ item.item.username }}"
+  when: item.json | length == 0
+  changed_when: true
+  no_log: true

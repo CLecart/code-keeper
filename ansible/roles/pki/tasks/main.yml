@@ -1,0 +1,68 @@
+# A small certificate authority for the HTTPS certificate of GitLab. Its
+# certificate is installed on the runner and can be imported in a browser.
+- name: Create the certificate authority directory
+  ansible.builtin.file:
+    path: "{{ pki_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Create the CA private key
+  community.crypto.openssl_privatekey:
+    path: "{{ pki_dir }}/ca.key"
+    type: ECC
+    curve: secp384r1
+    mode: "0600"
+
+- name: Create the CA certificate request
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: "{{ pki_dir }}/ca.key"
+    common_name: code-keeper CA
+    use_common_name_for_san: false
+    basic_constraints:
+      - "CA:TRUE"
+      - "pathlen:0"
+    basic_constraints_critical: true
+    key_usage:
+      - keyCertSign
+      - cRLSign
+    key_usage_critical: true
+  register: pki_ca_csr
+  changed_when: false
+
+- name: Create the CA certificate (10 years)
+  community.crypto.x509_certificate:
+    path: "{{ pki_ca_cert }}"
+    csr_content: "{{ pki_ca_csr.csr }}"
+    privatekey_path: "{{ pki_dir }}/ca.key"
+    provider: selfsigned
+    selfsigned_not_after: "+3650d"
+    mode: "0644"
+
+- name: Create the GitLab private key
+  community.crypto.openssl_privatekey:
+    path: "{{ pki_dir }}/gitlab.key"
+    type: ECC
+    curve: secp384r1
+    mode: "0600"
+
+- name: Create the GitLab certificate request
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: "{{ pki_dir }}/gitlab.key"
+    common_name: "{{ gitlab_host }}"
+    subject_alt_name:
+      - "IP:{{ gitlab_host }}"
+    extended_key_usage:
+      - serverAuth
+  register: pki_gitlab_csr
+  changed_when: false
+
+# 397 days: browsers refuse longer server certificates.
+- name: Sign the GitLab certificate with the CA
+  community.crypto.x509_certificate:
+    path: "{{ pki_dir }}/gitlab.crt"
+    csr_content: "{{ pki_gitlab_csr.csr }}"
+    provider: ownca
+    ownca_path: "{{ pki_ca_cert }}"
+    ownca_privatekey_path: "{{ pki_dir }}/ca.key"
+    ownca_not_after: "+397d"
+    mode: "0644"
