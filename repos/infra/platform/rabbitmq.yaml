@@ -1,0 +1,157 @@
+# rabbitmq: RabbitMQ 4 broker holding the durable "billing_queue".
+#
+# api-gateway publishes the POST /api/billing orders into the queue and
+# billing-app consumes them. Messages wait in the queue while billing-app is
+# down, and survive a broker restart thanks to the persistent volume.
+# Reachable inside the cluster at rabbitmq:5672 (AMQP 0-9-1).
+
+# Extra broker settings, loaded from /etc/rabbitmq/conf.d/ on top of the
+# rabbitmq.conf the image generates.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbitmq-config
+  labels:
+    app: rabbitmq
+    app.kubernetes.io/part-of: code-keeper
+data:
+  memory.conf: |
+    # RabbitMQ sizes its memory alarm (60 %) from the RAM of the node, not from
+    # the container limit: without this it would allow itself 1.2 GiB and be
+    # OOM-killed at 512 MiB before its flow control ever kicks in.
+    total_memory_available_override_value = 512MiB
+---
+# Headless Service: DNS name of the broker and governing Service of the StatefulSet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  labels:
+    app: rabbitmq
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  clusterIP: None
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: amqp
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  labels:
+    app: rabbitmq
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  serviceName: rabbitmq
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+        app.kubernetes.io/part-of: code-keeper
+    spec:
+      # None of the containers calls the Kubernetes API.
+      automountServiceAccountToken: false
+      # The image runs as "rabbitmq" (uid 100, gid 101); fsGroup makes the new EBS
+      # volume (owned by root) writable by the rabbitmq group.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: rabbitmq
+          image: rabbitmq-server
+          ports:
+            - name: amqp
+              containerPort: 5672
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: username
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: password
+          # TCP checks on the AMQP port: rabbitmq-diagnostics would start a whole
+          # Erlang VM at every probe.
+          startupProbe:
+            tcpSocket:
+              port: amqp
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: amqp
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: amqp
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+              ephemeral-storage: 64Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+              ephemeral-storage: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # Node database, message store and Erlang cookie ($HOME).
+            - name: data
+              mountPath: /var/lib/rabbitmq
+            # rabbitmq.conf is generated here by the entrypoint at every start.
+            - name: config
+              mountPath: /etc/rabbitmq
+            # Extra settings of the rabbitmq-config ConfigMap (memory.conf).
+            - name: extra-config
+              mountPath: /etc/rabbitmq/conf.d
+              readOnly: true
+            - name: logs
+              mountPath: /var/log/rabbitmq
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          emptyDir: {}
+        - name: extra-config
+          configMap:
+            name: rabbitmq-config
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app: rabbitmq
+          app.kubernetes.io/part-of: code-keeper
+      spec:
+        storageClassName: gp3-encrypted
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

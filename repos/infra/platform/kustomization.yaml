@@ -1,0 +1,21 @@
+# Platform layer of an environment, applied by scripts/deploy-platform.sh after
+# `terraform apply`: namespace, encrypted storage, the two databases, RabbitMQ
+# and the network policies of the whole application. The applications
+# themselves are deployed by their own pipelines into the same namespace.
+#
+# The containers reference their image by its bare name (image: rabbitmq-server);
+# deploy-platform.sh adds an "images" override with the ECR registry and the tag
+# of the last commit that changed images/<name>. The Secrets are created in the
+# cluster by the same script: they never enter Git.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: code-keeper
+
+resources:
+  - namespace.yaml
+  - storage.yaml
+  - inventory-database.yaml
+  - billing-database.yaml
+  - rabbitmq.yaml
+  - network-policies.yaml

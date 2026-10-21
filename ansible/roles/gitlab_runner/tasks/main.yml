@@ -77,17 +77,21 @@
   register: runner_config
   failed_when: false
 
-- name: Keep the authentication token of the registered runner
+# The authentication token of a runner is only returned once, at its creation,
+# then lives in config.toml: keep the token of every runner already registered.
+- name: Keep the tokens of the registered runners
   ansible.builtin.set_fact:
-    runner_token: "{{ (runner_config.content | b64decode | regex_search('token = \"(glrt-[^\"]+)\"', '\\1') | first) }}"
-  when:
-    - runner_config.content is defined
-    - runner_config.content | b64decode is search('token = \"glrt-')
+    runner_tokens: "{{ runner_tokens | default({}) | combine({item.name: runner_found[0]} if runner_found else {}) }}"
+  vars:
+    runner_pattern: '\[\[runners\]\]\s+name = "{{ item.name }}"\s+url = "[^"]+"\s+token = "(glrt-[^"]+)"'
+    runner_found: "{{ (runner_config.content | default('') | b64decode) | regex_search(runner_pattern, '\\1') | default([], true) }}"
+  loop: "{{ gitlab_runners }}"
+  loop_control:
+    label: "{{ item.name }}"
   no_log: true
 
 # Runner creation through the API (the registration token workflow is disabled).
-# The authentication token is only returned once, then lives in config.toml.
-- name: Create the instance runner in GitLab
+- name: Create the missing runners in GitLab
   ansible.builtin.uri:
     url: "{{ gitlab_api_url }}/user/runners"
     method: POST
@@ -97,21 +101,28 @@
     body_format: json
     body:
       runner_type: instance_type
-      description: "{{ runner_name }}"
-      tag_list: "{{ runner_tags }}"
-      run_untagged: true
+      description: "{{ item.name }}"
+      tag_list: "{{ item.tags }}"
+      run_untagged: "{{ item.run_untagged }}"
+      access_level: "{{ item.access_level }}"
     status_code: 201
   delegate_to: localhost
   become: false
+  loop: "{{ gitlab_runners }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in (runner_tokens | default({}))
   register: runner_created
-  when: runner_token is not defined
   changed_when: true
   no_log: true
 
-- name: Use the token of the new runner
+- name: Keep the tokens of the new runners
   ansible.builtin.set_fact:
-    runner_token: "{{ runner_created.json.token }}"
-  when: runner_created is changed
+    runner_tokens: "{{ runner_tokens | default({}) | combine({item.item.name: item.json.token}) }}"
+  loop: "{{ runner_created.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item is changed
   no_log: true
 
 - name: Write the runner configuration
@@ -133,11 +144,61 @@
 - name: Apply the pending restarts
   ansible.builtin.meta: flush_handlers
 
-- name: Check that GitLab accepts the runner
+- name: Check that GitLab accepts every runner
   ansible.builtin.command: gitlab-runner verify
   register: runner_verify
   changed_when: false
-  failed_when: runner_verify.rc != 0 or 'is valid' not in runner_verify.stderr + runner_verify.stdout
+  failed_when: >-
+    runner_verify.rc != 0 or
+    (runner_verify.stderr + runner_verify.stdout).count('is valid') != gitlab_runners | length
+
+# The settings of an existing runner (tags, protected branches only...) are
+# kept in GitLab, not in config.toml: align them with gitlab_runners.
+- name: List the instance runners
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/runners/all?type=instance_type&per_page=100"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+  delegate_to: localhost
+  become: false
+  register: runner_list
+
+- name: Read the settings of each runner
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/runners/{{ (runner_list.json | selectattr('description', 'equalto', item.name) | first).id }}"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+  delegate_to: localhost
+  become: false
+  loop: "{{ gitlab_runners }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: runner_details
+
+- name: Update the runners whose settings differ
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/runners/{{ item.json.id }}"
+    method: PUT
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body:
+      tag_list: "{{ item.item.tags }}"
+      run_untagged: "{{ item.item.run_untagged }}"
+      access_level: "{{ item.item.access_level }}"
+  delegate_to: localhost
+  become: false
+  loop: "{{ runner_details.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: >-
+    (item.json.tag_list | sort | join(',')) != (item.item.tags.split(',') | select | sort | join(','))
+    or item.json.run_untagged != item.item.run_untagged
+    or item.json.access_level != item.item.access_level
+  changed_when: true
 
 # Old images and volumes of finished jobs fill the 30 GB disk otherwise.
 - name: Clean the Docker cache of the jobs every week

@@ -1,0 +1,6 @@
+# Terraform: provider cache, local state and plans. The lock files are committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log

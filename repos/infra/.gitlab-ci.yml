@@ -1,0 +1,352 @@
+# Pipeline of the infrastructure (code-keeper/infra): Terraform of the staging
+# and production environments, then their platform layer (databases, RabbitMQ,
+# monitoring).
+#
+#   images -> init -> validate -> plan -> apply-staging -> approval -> apply-production
+#
+# - Push on main (protected): creates or updates both environments. The
+#   production stages wait until a Maintainer (stakeholder) runs the manual job
+#   approve-production: only users allowed to merge into main may run it.
+# - Merge request: init without backend and validate only, with no AWS access.
+# - "Run pipeline" on main with DESTROY=true (only Maintainers may set a
+#   variable): the same stages delete both environments, production after approval.
+#
+# AWS access: each job exchanges its ID token for the role of this project
+# (OIDC, role code-keeper-ci-infra), which only the main branch may assume.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"
+
+stages:
+  - images
+  - init
+  - validate
+  - plan
+  - apply-staging
+  - approval
+  - apply-production
+
+variables:
+  DESTROY:
+    value: "false"
+    options: ["false", "true"]
+    description: "true deletes both environments (end of a work session)."
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_PLUGIN_CACHE_DIR: "$CI_PROJECT_DIR/.terraform-plugins"
+  # scripts/image-tag.sh reads the history of images/.
+  GIT_DEPTH: "0"
+
+default:
+  image:
+    name: public.ecr.aws/hashicorp/terraform:1.16.6
+    entrypoint: [""]
+
+# ---- building blocks ---------------------------------------------------------
+
+.on-main: &on-main
+  if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"
+
+# OIDC: AWS reads the ID token from a file, AWS_ROLE_ARN and AWS_REGION come
+# from the protected CI variables of the project and of the group.
+.aws:
+  id_tokens:
+    AWS_ID_TOKEN:
+      aud: sts.amazonaws.com
+  before_script:
+    - printf '%s' "$AWS_ID_TOKEN" > /tmp/web-identity-token
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/web-identity-token
+    - export AWS_ROLE_SESSION_NAME="gitlab-${CI_PROJECT_NAME}-${CI_JOB_ID}"
+
+.terraform-cache:
+  cache:
+    key:
+      files:
+        - terraform/envs/staging/.terraform.lock.hcl
+        - terraform/envs/prod/.terraform.lock.hcl
+    paths:
+      - .terraform-plugins
+
+# Terraform of one environment ($ENV), state in the S3 bucket of bootstrap/.
+.terraform:
+  extends: [.aws, .terraform-cache]
+  before_script:
+    - !reference [.aws, before_script]
+    - mkdir -p "$TF_PLUGIN_CACHE_DIR"
+    - terraform -chdir="terraform/envs/$ENV" init -backend-config="bucket=$TF_STATE_BUCKET"
+
+# kubectl and helm for the platform layer ($ENV).
+.kubernetes:
+  extends: .aws
+  before_script:
+    - !reference [.aws, before_script]
+    - apk add --no-cache aws-cli kubectl helm bash
+
+# ---- images ------------------------------------------------------------------
+
+# Builds, scans (Trivy) and pushes the database and RabbitMQ images that are
+# not in ECR yet; their tags go to the deployment jobs (dotenv report).
+build-platform-images:
+  stage: images
+  image: public.ecr.aws/docker/library/docker:29.9.2-cli
+  tags: [docker-build]
+  extends: .aws
+  before_script:
+    - !reference [.aws, before_script]
+    - apk add --no-cache aws-cli git bash
+  script:
+    - scripts/build-images.sh
+  artifacts:
+    reports:
+      dotenv: images.env
+  rules:
+    - if: $DESTROY == "true"
+      when: never
+    - *on-main
+
+# ---- init / validate ----------------------------------------------------------
+
+# Downloads the providers and modules and checks the access to the state backend.
+init:
+  stage: init
+  extends: .terraform-cache
+  script:
+    - mkdir -p "$TF_PLUGIN_CACHE_DIR"
+    - |
+      for env in staging prod; do
+        echo "== $env"
+        terraform -chdir="terraform/envs/$env" init -backend=false
+      done
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+init-backend:
+  stage: init
+  extends: [.aws, .terraform-cache]
+  script:
+    - mkdir -p "$TF_PLUGIN_CACHE_DIR"
+    - |
+      for env in staging prod; do
+        echo "== $env"
+        terraform -chdir="terraform/envs/$env" init -backend-config="bucket=$TF_STATE_BUCKET"
+      done
+  rules:
+    - *on-main
+
+# Syntax, formatting and consistency of both environments (no AWS access).
+validate:
+  stage: validate
+  extends: .terraform-cache
+  script:
+    - mkdir -p "$TF_PLUGIN_CACHE_DIR"
+    - terraform fmt -check -recursive -diff terraform
+    - |
+      for env in staging prod; do
+        echo "== $env"
+        terraform -chdir="terraform/envs/$env" init -backend=false
+        terraform -chdir="terraform/envs/$env" validate
+      done
+
+# ---- plan --------------------------------------------------------------------
+
+.plan:
+  stage: plan
+  extends: .terraform
+  script:
+    - |
+      if [ "$DESTROY" = "true" ]; then mode="-destroy"; else mode=""; fi
+      terraform -chdir="terraform/envs/$ENV" plan $mode -out=plan.tfplan
+      terraform -chdir="terraform/envs/$ENV" show -no-color plan.tfplan > "terraform/envs/$ENV/plan.txt"
+  artifacts:
+    paths:
+      - terraform/envs/$ENV/plan.tfplan
+      - terraform/envs/$ENV/plan.txt
+    expire_in: 1 day
+  rules:
+    - *on-main
+
+plan-staging:
+  extends: .plan
+  variables:
+    ENV: staging
+
+plan-production:
+  extends: .plan
+  variables:
+    ENV: prod
+
+# ---- apply -------------------------------------------------------------------
+
+.not-destroy: &not-destroy
+  if: $DESTROY == "true"
+  when: never
+
+.destroy-on-main: &destroy-on-main
+  if: $DESTROY == "true" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"
+
+# Applies exactly the plan of the plan stage, then gives the public URL of the
+# environment to GitLab (Operate > Environments).
+.apply:
+  extends: .terraform
+  timeout: 45m
+  script:
+    - terraform -chdir="terraform/envs/$ENV" apply plan.tfplan
+    - echo "API_URL=$(terraform -chdir="terraform/envs/$ENV" output -raw api_url)" > deploy.env
+  artifacts:
+    reports:
+      dotenv: deploy.env
+  rules:
+    - *not-destroy
+    - *on-main
+
+# Platform layer after a creation or an update.
+.deploy-platform:
+  extends: .kubernetes
+  timeout: 30m
+  script:
+    - scripts/deploy-platform.sh "$ENV"
+  rules:
+    - *not-destroy
+    - *on-main
+
+# Deletion: the namespace and its EBS volumes go first, while the cluster still
+# runs (scripts/remove-platform.sh), then the destroy plan of the plan stage.
+.remove-platform:
+  extends: .kubernetes
+  script:
+    - scripts/remove-platform.sh "$ENV"
+  rules:
+    - *destroy-on-main
+
+.destroy:
+  extends: .terraform
+  timeout: 45m
+  script:
+    - terraform -chdir="terraform/envs/$ENV" apply plan.tfplan
+  rules:
+    - *destroy-on-main
+
+apply-staging:
+  stage: apply-staging
+  extends: .apply
+  variables:
+    ENV: staging
+  resource_group: staging
+  needs:
+    - plan-staging
+  environment:
+    name: staging
+    url: $API_URL
+
+deploy-platform-staging:
+  stage: apply-staging
+  extends: .deploy-platform
+  variables:
+    ENV: staging
+  resource_group: staging
+  needs:
+    - apply-staging
+    - build-platform-images
+  environment:
+    name: staging
+    action: prepare
+
+remove-platform-staging:
+  stage: apply-staging
+  extends: .remove-platform
+  variables:
+    ENV: staging
+  resource_group: staging
+  needs:
+    - plan-staging
+  environment:
+    name: staging
+    action: prepare
+
+destroy-staging:
+  stage: apply-staging
+  extends: .destroy
+  variables:
+    ENV: staging
+  resource_group: staging
+  needs:
+    - plan-staging
+    - remove-platform-staging
+  environment:
+    name: staging
+    action: stop
+
+# ---- approval ----------------------------------------------------------------
+
+# Manual gate before production: running a manual job of main needs the right
+# to merge into main, so only the Maintainers (stakeholder, clecart) can approve.
+approve-production:
+  stage: approval
+  image: public.ecr.aws/docker/library/alpine:3.23
+  script:
+    - echo "Production approved by $GITLAB_USER_LOGIN (DESTROY=$DESTROY)"
+  needs:
+    - job: deploy-platform-staging
+      optional: true
+    - job: destroy-staging
+      optional: true
+  when: manual
+  allow_failure: false
+  rules:
+    - *on-main
+
+# ---- production --------------------------------------------------------------
+
+apply-production:
+  stage: apply-production
+  extends: .apply
+  variables:
+    ENV: prod
+  resource_group: production
+  needs:
+    - approve-production
+    - plan-production
+  environment:
+    name: production
+    url: $API_URL
+
+deploy-platform-production:
+  stage: apply-production
+  extends: .deploy-platform
+  variables:
+    ENV: prod
+  resource_group: production
+  needs:
+    - apply-production
+    - build-platform-images
+  environment:
+    name: production
+    action: prepare
+
+remove-platform-production:
+  stage: apply-production
+  extends: .remove-platform
+  variables:
+    ENV: prod
+  resource_group: production
+  needs:
+    - approve-production
+  environment:
+    name: production
+    action: prepare
+
+destroy-production:
+  stage: apply-production
+  extends: .destroy
+  variables:
+    ENV: prod
+  resource_group: production
+  needs:
+    - approve-production
+    - plan-production
+    - remove-platform-production
+  environment:
+    name: production
+    action: stop

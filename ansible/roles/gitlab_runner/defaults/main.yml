@@ -1,5 +1,24 @@
-runner_name: code-keeper-runner
-runner_tags: docker,aws
-# Two jobs at a time on the 4 GiB machine.
+# Two runners on the same machine, both with the Docker executor:
+#   - general: every job without a tag, from any branch; no access to Docker
+#     itself, so a job of a test branch cannot touch the machine;
+#   - builder: only jobs of protected branches (main, reviewed code) tagged
+#     docker-build; it mounts the Docker socket to build images (GitLab
+#     "socket binding": no privileged mode, but the job controls the Docker
+#     daemon of the machine), one job at a time.
+gitlab_runners:
+  - name: code-keeper-runner
+    tags: ""
+    run_untagged: true
+    access_level: not_protected
+    docker_socket: false
+    limit: 0
+  - name: code-keeper-builder
+    tags: docker-build
+    run_untagged: false
+    access_level: ref_protected
+    docker_socket: true
+    limit: 1
+
+# Jobs at a time on the 4 GiB machine, all runners together.
 runner_concurrent: 2
-runner_default_image: alpine:3.23
+runner_default_image: public.ecr.aws/docker/library/alpine:3.23

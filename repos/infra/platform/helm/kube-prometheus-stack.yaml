@@ -1,0 +1,54 @@
+# Values of the kube-prometheus-stack chart (Prometheus, Grafana, kube-state-metrics,
+# node-exporter and their dashboards), installed by scripts/deploy-platform.sh as the
+# "monitoring" release in the "monitoring" namespace.
+#
+# Everything stays inside the cluster: Grafana is opened with scripts/grafana.sh
+# (kubectl port-forward), never through a public address. Amazon Managed Grafana
+# would need the paid AWS plan.
+
+# EKS runs the control plane itself: etcd, the scheduler and the controller
+# manager cannot be scraped from the worker nodes.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+# kube-proxy metrics are not needed for this project.
+kubeProxy:
+  enabled: false
+
+# No alerting in this project.
+alertmanager:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    # The cluster lives one work session: no persistent volume (an EBS volume
+    # would outlive `terraform destroy`), and one day of data at most.
+    retention: 1d
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
+grafana:
+  # No adminPassword: the chart generates a random one, stored in the
+  # monitoring-grafana Secret (scripts/grafana.sh prints it).
+  persistence:
+    enabled: false
+  # The chart adds an Alertmanager data source even when Alertmanager is
+  # disabled; it would point to a missing service ("Could not load firing alerts").
+  sidecar:
+    datasources:
+      alertmanager:
+        enabled: false
+  # Grafana 13 was OOMKilled with a 256Mi limit while loading a dashboard.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi

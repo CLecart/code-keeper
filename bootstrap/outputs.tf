@@ -39,6 +39,16 @@ output "state_bucket" {
   value       = aws_s3_bucket.state.bucket
 }
 
+output "eks_api_allowed_cidrs" {
+  description = "Ranges allowed on the EKS API of the environments: the admin IP and the runner (CI variable TF_VAR_eks_api_allowed_cidrs)."
+  value       = concat(var.admin_cidrs, ["${aws_eip.runner.public_ip}/32"])
+}
+
+output "admin_principal_arn" {
+  description = "IAM identity running this stack, made cluster admin of the environments (CI variable TF_VAR_admin_principal_arns)."
+  value       = data.aws_caller_identity.current.arn
+}
+
 output "oidc_issuer_url" {
   description = "Issuer of the GitLab CI ID tokens (gitlab_rails['ci_id_tokens_issuer_url'])."
   value       = local.oidc_issuer

@@ -1,0 +1,52 @@
+# Values of the official fluent-bit chart, installed by scripts/deploy-platform.sh as the
+# "fluent-bit" release in the "logging" namespace.
+#
+# A DaemonSet reads the container logs of every node and ships those of the
+# code-keeper namespace, and only them (far below the 5 GB/month CloudWatch
+# free tier), to the log group created by terraform/modules/environment/observability.tf.
+# AWS permissions come from the EKS Pod Identity association of that file,
+# bound to the "fluent-bit" service account below.
+
+serviceAccount:
+  create: true
+  name: fluent-bit
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+config:
+  inputs: |
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*_code-keeper_*.log
+        multiline.parser  cri
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+
+  # Adds the pod, container and namespace names, and parses the JSON log lines
+  # of the Node.js services into fields.
+  filters: |
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Merge_Log           On
+        Keep_Log            Off
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude On
+
+  # One log stream per pod and container, e.g. api-gateway-6d8f…-x2k9p.api-gateway.
+  outputs: |
+    [OUTPUT]
+        Name                cloudwatch_logs
+        Match               kube.*
+        region              eu-west-3
+        log_group_name      /aws/eks/CLUSTER_NAME/containers
+        log_stream_template $kubernetes['pod_name'].$kubernetes['container_name']
+        log_stream_prefix   unknown-
+        auto_create_group   false

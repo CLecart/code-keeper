@@ -7,6 +7,8 @@ all:
     oidc_bucket: code-keeper-oidc-example
     tf_state_bucket: code-keeper-tfstate-example
     ecr_registry: 111122223333.dkr.ecr.eu-west-3.amazonaws.com
+    eks_api_allowed_cidrs: ["198.51.100.7/32","203.0.113.20/32"]
+    admin_principal_arn: arn:aws:iam::111122223333:user/admin
     ci_role_arns:
       infra: arn:aws:iam::111122223333:role/code-keeper-ci-infra
       inventory-app: arn:aws:iam::111122223333:role/code-keeper-ci-inventory-app

@@ -16,6 +16,7 @@ if [[ ${#instances[@]} -ne 2 ]]; then
 fi
 
 status() {
+  # shellcheck disable=SC2016 # the backticks are JMESPath literals, not shell
   aws ec2 describe-instances --region "$REGION" --instance-ids "${instances[@]}" \
     --query 'Reservations[].Instances[].[Tags[?Key==`Name`]|[0].Value,State.Name,PublicIpAddress]' \
     --output text

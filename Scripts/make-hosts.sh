@@ -27,6 +27,8 @@ all:
     oidc_bucket: $(out oidc_bucket)
     tf_state_bucket: $(out state_bucket)
     ecr_registry: $(out registry)
+    eks_api_allowed_cidrs: $(jq -c '.eks_api_allowed_cidrs.value' <<<"$outputs")
+    admin_principal_arn: $(out admin_principal_arn)
     ci_role_arns:
 $(jq -r '.ci_role_arns.value | to_entries[] | "      \(.key): \(.value)"' <<<"$outputs")
   children:

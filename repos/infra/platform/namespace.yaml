@@ -1,0 +1,8 @@
+# Namespace of the whole application: deleting it removes every workload and
+# every volume claim at once (scripts/destroy-environment.sh).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: code-keeper
+  labels:
+    app.kubernetes.io/part-of: code-keeper

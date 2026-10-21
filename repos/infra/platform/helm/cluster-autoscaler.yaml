@@ -1,0 +1,36 @@
+# Values of the cluster-autoscaler chart (kubernetes/autoscaler), installed by
+# scripts/deploy-platform.sh as the "cluster-autoscaler" release in kube-system.
+# AWS permissions: EKS Pod Identity association of terraform/modules/environment/autoscaling.tf,
+# bound to the "cluster-autoscaler" service account below.
+
+cloudProvider: aws
+awsRegion: eu-west-3
+
+autoDiscovery:
+  # CLUSTER_NAME is replaced by scripts/deploy-platform.sh (code-keeper-<environment>).
+  clusterName: CLUSTER_NAME
+
+# The autoscaler minor version should match the Kubernetes one (1.36); the chart
+# still defaults to v1.35.0.
+image:
+  tag: v1.36.1
+
+rbac:
+  serviceAccount:
+    name: cluster-autoscaler
+
+extraArgs:
+  # An unneeded node is removed after 2 minutes instead of 10, and 2 minutes after
+  # a scale-out: the extra node costs as little as possible.
+  scale-down-unneeded-time: 2m
+  scale-down-delay-after-add: 2m
+  # The emptyDir volumes of this stack only hold logs and caches (the data of the
+  # databases and of RabbitMQ is on EBS): they must not pin a node forever.
+  skip-nodes-with-local-storage: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 300Mi

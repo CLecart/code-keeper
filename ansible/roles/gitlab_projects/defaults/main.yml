@@ -34,6 +34,13 @@ gitlab_group_variables:
   - key: TF_STATE_BUCKET
     value: "{{ tf_state_bucket }}"
     description: S3 bucket of the Terraform states (infra)
+  # Read by Terraform as var.eks_api_allowed_cidrs and var.admin_principal_arns.
+  - key: TF_VAR_eks_api_allowed_cidrs
+    value: "{{ eks_api_allowed_cidrs | to_json }}"
+    description: Ranges allowed on the EKS API (admin machine, runner)
+  - key: TF_VAR_admin_principal_arns
+    value: "{{ [admin_principal_arn] | to_json }}"
+    description: IAM identities with cluster admin rights (admin machine)
 
 # Protection of main: Maintainers push and merge, nobody force-pushes.
 gitlab_main_protection:

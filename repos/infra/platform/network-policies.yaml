@@ -1,0 +1,131 @@
+# Network isolation of the code-keeper namespace (enforced by the VPC CNI,
+# enableNetworkPolicy in terraform/modules/environment/eks.tf).
+#
+# Every incoming connection is refused, then only the flows the application
+# needs are allowed, port by port:
+#
+#   (ALB, NodePort) -> api-gateway:3000
+#   api-gateway     -> inventory-app:8080
+#   api-gateway     -> rabbitmq:5672      <- billing-app
+#   inventory-app   -> inventory-db:5432
+#   billing-app     -> billing-db:5432
+#
+# Outgoing traffic (DNS, the flows above) is not restricted: each flow is
+# already checked on the receiving side.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# The entry point: reached through its NodePort, which the node security group
+# opens to the internal ALB only (terraform/modules/environment/alb.tf), so no source
+# restriction here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-gateway-ingress
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: inventory-app-ingress
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  podSelector:
+    matchLabels:
+      app: inventory-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rabbitmq-ingress
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  podSelector:
+    matchLabels:
+      app: rabbitmq
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: ["api-gateway", "billing-app"]
+      ports:
+        - protocol: TCP
+          port: 5672
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: inventory-db-ingress
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  podSelector:
+    matchLabels:
+      app: inventory-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: inventory-app
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: billing-db-ingress
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  podSelector:
+    matchLabels:
+      app: billing-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: billing-app
+      ports:
+        - protocol: TCP
+          port: 5432
