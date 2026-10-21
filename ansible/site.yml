@@ -21,6 +21,13 @@
   roles:
     - gitlab
 
+# Uses the AWS CLI credentials of the admin machine.
+- name: Publish the OpenID configuration of GitLab for AWS
+  hosts: controller
+  gather_facts: false
+  roles:
+    - gitlab_oidc
+
 # API calls only, run from the admin machine.
 - name: Create the GitLab group, its members and the four projects
   hosts: controller

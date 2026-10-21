@@ -16,6 +16,25 @@ gitlab_project_settings:
   container_registry_access_level: disabled
   package_registry_access_level: disabled
 
+# Flags of every CI/CD variable set by this role (tasks/ci_variable.yml).
+gitlab_ci_variable_flags:
+  protected: true
+  masked: false
+  raw: true
+  variable_type: env_var
+
+# Variables shared by the four projects (values from the bootstrap outputs).
+gitlab_group_variables:
+  - key: AWS_REGION
+    value: "{{ aws_region }}"
+    description: AWS Region of the environments
+  - key: ECR_REGISTRY
+    value: "{{ ecr_registry }}"
+    description: Amazon ECR registry of the images
+  - key: TF_STATE_BUCKET
+    value: "{{ tf_state_bucket }}"
+    description: S3 bucket of the Terraform states (infra)
+
 # Protection of main: Maintainers push and merge, nobody force-pushes.
 gitlab_main_protection:
   name: main

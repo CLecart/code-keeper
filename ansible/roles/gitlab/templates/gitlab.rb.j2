@@ -13,6 +13,10 @@ gitlab_rails['store_initial_root_password'] = false
 
 gitlab_rails['time_zone'] = 'Europe/Paris'
 
+# CI ID tokens (OIDC towards AWS) carry the public S3 bucket as issuer: GitLab
+# stays closed, and AWS reads the keys published there (roles/gitlab_oidc).
+gitlab_rails['ci_id_tokens_issuer_url'] = '{{ oidc_issuer_url }}'
+
 # Features this project does not use: images go to Amazon ECR, deployments use
 # kubectl from the pipelines, and there is no mail server.
 registry['enable'] = false

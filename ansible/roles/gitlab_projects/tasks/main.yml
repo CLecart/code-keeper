@@ -34,6 +34,16 @@
 - name: Set the group members
   ansible.builtin.include_tasks: members.yml
 
+- name: Set the CI/CD variables of the group
+  ansible.builtin.include_tasks: ci_variable.yml
+  vars:
+    ci_variable_scope: groups
+    ci_variable_owner: "{{ gitlab_group_id }}"
+  loop: "{{ gitlab_group_variables }}"
+  loop_control:
+    loop_var: ci_variable
+    label: "{{ ci_variable.key }}"
+
 - name: Create and configure the projects
   ansible.builtin.include_tasks: project.yml
   loop: "{{ gitlab_projects }}"

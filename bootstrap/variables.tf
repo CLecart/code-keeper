@@ -69,6 +69,24 @@ variable "images" {
   ]
 }
 
+variable "applications" {
+  description = "Images built by their own GitLab project (same name); the other images are built by the infra project."
+  type        = list(string)
+  default     = ["api-gateway-app", "inventory-app", "billing-app"]
+}
+
+variable "environments" {
+  description = "Environments created by the infra pipeline; their resources are named <project>-<environment>-..."
+  type        = list(string)
+  default     = ["staging", "prod"]
+}
+
+variable "gitlab_group" {
+  description = "GitLab group of the projects, part of the subject claim of their ID tokens."
+  type        = string
+  default     = "code-keeper"
+}
+
 variable "images_to_keep" {
   description = "Number of images kept per repository; older ones are expired by the lifecycle policy."
   type        = number

@@ -15,7 +15,10 @@ resource "aws_instance" "gitlab" {
   instance_type          = var.gitlab_instance_type
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.gitlab.id]
-  key_name               = aws_key_pair.admin.key_name
+  # Public on purpose: the admin and the runner reach it through its Elastic IP,
+  # and the gitlab security group only lets in the admin IP and the runner.
+  associate_public_ip_address = true
+  key_name                    = aws_key_pair.admin.key_name
 
   root_block_device {
     volume_type = "gp3"
@@ -41,8 +44,10 @@ resource "aws_instance" "runner" {
   instance_type          = var.runner_instance_type
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.runner.id]
-  key_name               = aws_key_pair.admin.key_name
-  iam_instance_profile   = aws_iam_instance_profile.runner.name
+  # Public on purpose: the admin and the runner reach it through its Elastic IP,
+  # and the runner security group only lets in the admin IP.
+  associate_public_ip_address = true
+  key_name                    = aws_key_pair.admin.key_name
 
   root_block_device {
     volume_type = "gp3"
@@ -50,11 +55,12 @@ resource "aws_instance" "runner" {
     encrypted   = true
   }
 
-  # Hop limit 2: the CI jobs run in Docker containers, one network hop away from
-  # the instance metadata service that hands out the runner role credentials.
+  # No instance role: each job gets the role of its own project through OIDC
+  # (oidc.tf, iam.tf). Hop limit 1 keeps the job containers away from the
+  # instance metadata service altogether.
   metadata_options {
     http_tokens                 = "required"
-    http_put_response_hop_limit = 2
+    http_put_response_hop_limit = 1
   }
 
   tags = { Name = "${var.project}-runner" }

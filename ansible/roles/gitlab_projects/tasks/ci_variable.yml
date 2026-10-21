@@ -1,0 +1,44 @@
+# Creates or updates one CI/CD variable of a group or a project.
+#   ci_variable_scope  groups | projects
+#   ci_variable_owner  ID of the group or project
+#   ci_variable        {key, value, description}
+# Every variable is protected (only jobs of protected branches receive it) and
+# raw (no expansion). None of them is a secret: the AWS access itself comes
+# from OIDC, so nothing needs masking.
+- name: Look up the variable {{ ci_variable.key }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/{{ ci_variable_scope }}/{{ ci_variable_owner }}/variables/{{ ci_variable.key }}"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    status_code: [200, 404]
+  register: gitlab_ci_variable_current
+
+- name: Create the variable {{ ci_variable.key }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/{{ ci_variable_scope }}/{{ ci_variable_owner }}/variables"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body: "{{ ci_variable | combine(gitlab_ci_variable_flags) }}"
+    status_code: 201
+  when: gitlab_ci_variable_current.status == 404
+  changed_when: true
+
+- name: Update the variable {{ ci_variable.key }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/{{ ci_variable_scope }}/{{ ci_variable_owner }}/variables/{{ ci_variable.key }}"
+    method: PUT
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body: "{{ ci_variable | combine(gitlab_ci_variable_flags) }}"
+  when:
+    - gitlab_ci_variable_current.status == 200
+    - >-
+      (ci_variable | combine(gitlab_ci_variable_flags) | dict2items)
+      | difference(gitlab_ci_variable_current.json | dict2items) | length > 0
+  changed_when: true

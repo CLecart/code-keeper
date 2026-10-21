@@ -1,0 +1,63 @@
+# Publishes the OpenID configuration and the public signing keys of GitLab to
+# the public S3 bucket of bootstrap/oidc.tf, where AWS STS reads them to check
+# the CI ID tokens. Runs again after any key change; uploads only what differs.
+# Uses the AWS CLI credentials of the admin machine: no CI role can write there.
+- name: Read the OpenID configuration of GitLab
+  ansible.builtin.uri:
+    url: "{{ gitlab_url }}/.well-known/openid-configuration"
+    ca_path: "{{ pki_ca_cert }}"
+  register: gitlab_oidc_config
+
+- name: Read the public signing keys of GitLab
+  ansible.builtin.uri:
+    url: "{{ gitlab_url }}/oauth/discovery/keys"
+    ca_path: "{{ pki_ca_cert }}"
+  register: gitlab_oidc_keys
+
+# The issuer and the key location become the public bucket (GitLab
+# documentation, "Configure a non-public GitLab instance").
+- name: Prepare the documents to publish
+  ansible.builtin.set_fact:
+    gitlab_oidc_documents:
+      - key: .well-known/openid-configuration
+        content: >-
+          {{ gitlab_oidc_config.json | combine({
+               'issuer': oidc_issuer_url,
+               'jwks_uri': oidc_issuer_url ~ '/oauth/discovery/keys'}) }}
+      - key: oauth/discovery/keys
+        content: "{{ gitlab_oidc_keys.json }}"
+
+- name: Read the published documents
+  ansible.builtin.command:
+    argv: [aws, s3, cp, "s3://{{ oidc_bucket }}/{{ item.key }}", "-", --region, "{{ aws_region }}"]
+  loop: "{{ gitlab_oidc_documents }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: gitlab_oidc_published
+  changed_when: false
+  failed_when: false
+
+- name: Publish the documents that differ
+  ansible.builtin.command:
+    argv:
+      - aws
+      - s3
+      - cp
+      - "-"
+      - "s3://{{ oidc_bucket }}/{{ item.item.key }}"
+      - --content-type
+      - application/json
+      - --region
+      - "{{ aws_region }}"
+    stdin: "{{ item.item.content | to_json }}"
+  loop: "{{ gitlab_oidc_published.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when: item.rc != 0 or (item.stdout | from_json) != item.item.content
+  changed_when: true
+
+- name: Check that the configuration is public and points to the bucket
+  ansible.builtin.uri:
+    url: "{{ oidc_issuer_url }}/.well-known/openid-configuration"
+  register: gitlab_oidc_public
+  failed_when: gitlab_oidc_public.json.issuer != oidc_issuer_url

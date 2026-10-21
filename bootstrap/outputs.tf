@@ -39,7 +39,17 @@ output "state_bucket" {
   value       = aws_s3_bucket.state.bucket
 }
 
-output "runner_role_arn" {
-  description = "IAM role the CI jobs run with."
-  value       = aws_iam_role.runner.arn
+output "oidc_issuer_url" {
+  description = "Issuer of the GitLab CI ID tokens (gitlab_rails['ci_id_tokens_issuer_url'])."
+  value       = local.oidc_issuer
+}
+
+output "oidc_bucket" {
+  description = "Bucket holding the public OpenID configuration and keys of GitLab."
+  value       = aws_s3_bucket.oidc.bucket
+}
+
+output "ci_role_arns" {
+  description = "GitLab project => IAM role its main branch assumes (CI variable AWS_ROLE_ARN)."
+  value       = { for name, role in aws_iam_role.ci : name => role.arn }
 }
