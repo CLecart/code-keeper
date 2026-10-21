@@ -1,0 +1,77 @@
+- name: Look up the project {{ gitlab_project.name }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ (gitlab_group.path ~ '/' ~ gitlab_project.name) | urlencode | replace('/', '%2F') }}"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    status_code: [200, 404]
+  register: gitlab_project_lookup
+
+# Created empty: its content is pushed by Scripts/repos.sh.
+- name: Create the project {{ gitlab_project.name }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body:
+      name: "{{ gitlab_project.name }}"
+      path: "{{ gitlab_project.name }}"
+      namespace_id: "{{ gitlab_group_id }}"
+      description: "{{ gitlab_project.description }}"
+      default_branch: main
+      initialize_with_readme: false
+      visibility: private
+    status_code: 201
+  register: gitlab_project_created
+  when: gitlab_project_lookup.status == 404
+  changed_when: true
+
+- name: Keep the project data
+  ansible.builtin.set_fact:
+    gitlab_project_data: "{{ gitlab_project_created.json if gitlab_project_created is changed else gitlab_project_lookup.json }}"
+
+- name: List the project settings that differ from the wanted ones
+  ansible.builtin.set_fact:
+    gitlab_project_to_change: >-
+      {{ gitlab_project_settings | combine({'description': gitlab_project.description})
+         | dict2items
+         | difference(gitlab_project_data | dict2items)
+         | map(attribute='key') | list }}
+
+- name: Update the settings of {{ gitlab_project.name }} ({{ gitlab_project_to_change | join(', ') or 'none' }})
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ gitlab_project_data.id }}"
+    method: PUT
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body: "{{ gitlab_project_settings | combine({'description': gitlab_project.description}) }}"
+  when: gitlab_project_to_change | length > 0
+  changed_when: true
+
+- name: Look up the protection of main in {{ gitlab_project.name }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ gitlab_project_data.id }}/protected_branches/main"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    status_code: [200, 404]
+  register: gitlab_main_lookup
+
+# A rule can protect main before the branch exists (first push).
+- name: Protect main in {{ gitlab_project.name }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ gitlab_project_data.id }}/protected_branches"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body: "{{ gitlab_main_protection }}"
+    status_code: 201
+  when: gitlab_main_lookup.status == 404
+  changed_when: true

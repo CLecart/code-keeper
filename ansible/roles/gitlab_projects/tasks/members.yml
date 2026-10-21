@@ -1,0 +1,65 @@
+- name: Look up the member accounts
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users?username={{ item.username }}"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+  loop: "{{ gitlab_group_members }}"
+  loop_control:
+    label: "{{ item.username }}"
+  register: gitlab_member_lookups
+
+- name: Map each username to its account ID
+  ansible.builtin.set_fact:
+    gitlab_member_ids: "{{ gitlab_member_ids | default({}) | combine({item.item.username: item.json[0].id}) }}"
+  loop: "{{ gitlab_member_lookups.results }}"
+  loop_control:
+    label: "{{ item.item.username }}"
+
+- name: Read the direct members of the group
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ gitlab_group_id }}/members?per_page=100"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+  register: gitlab_group_members_current
+
+- name: Map each current member to its role
+  ansible.builtin.set_fact:
+    gitlab_member_levels: "{{ gitlab_group_members_current.json | items2dict(key_name='username', value_name='access_level') }}"
+
+- name: Add the missing members
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ gitlab_group_id }}/members"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body:
+      user_id: "{{ gitlab_member_ids[item.username] }}"
+      access_level: "{{ item.access_level }}"
+    status_code: 201
+  loop: "{{ gitlab_group_members }}"
+  loop_control:
+    label: "{{ item.username }} ({{ item.access_level }})"
+  when: item.username not in gitlab_member_levels
+  changed_when: true
+
+- name: Fix the role of the existing members
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ gitlab_group_id }}/members/{{ gitlab_member_ids[item.username] }}"
+    method: PUT
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body:
+      access_level: "{{ item.access_level }}"
+  loop: "{{ gitlab_group_members }}"
+  loop_control:
+    label: "{{ item.username }} ({{ item.access_level }})"
+  when:
+    - item.username in gitlab_member_levels
+    - gitlab_member_levels[item.username] != item.access_level
+  changed_when: true

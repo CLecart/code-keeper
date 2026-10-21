@@ -1,0 +1,24 @@
+# Settings applied to every project of the group (PUT /projects/:id).
+gitlab_project_settings:
+  visibility: private
+  # A merge request is merged only after a green pipeline and resolved threads.
+  only_allow_merge_if_pipeline_succeeds: true
+  only_allow_merge_if_all_discussions_are_resolved: true
+  remove_source_branch_after_merge: true
+  auto_devops_enabled: false
+  # Job logs are for project members only.
+  public_jobs: false
+  # A deployment job of an older pipeline never runs after a newer one.
+  ci_forward_deployment_enabled: true
+  # Only Maintainers may pass variables to a pipeline they start.
+  ci_pipeline_variables_minimum_override_role: maintainer
+  # Images go to Amazon ECR, there are no packages.
+  container_registry_access_level: disabled
+  package_registry_access_level: disabled
+
+# Protection of main: Maintainers push and merge, nobody force-pushes.
+gitlab_main_protection:
+  name: main
+  push_access_level: 40
+  merge_access_level: 40
+  allow_force_push: false

@@ -1,0 +1,38 @@
+- name: Look up the admin account
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users?username={{ gitlab_admin_username }}"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+  register: gitlab_admin_lookup
+
+- name: Read the SSH keys of the admin account
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users/{{ gitlab_admin_lookup.json[0].id }}/keys"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+  register: gitlab_admin_keys
+
+# Keys are compared on their type and value: GitLab rewrites the trailing comment.
+# regex_search, not regex_replace with '\1': in a condition that string literal
+# turns into a control character and the key is never recognised.
+- name: Add the SSH key of the admin machine
+  vars:
+    gitlab_admin_key: "{{ lookup('ansible.builtin.file', gitlab_admin_ssh_public_key_file) }}"
+    gitlab_admin_key_material: "{{ gitlab_admin_key.split()[:2] | join(' ') }}"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users/{{ gitlab_admin_lookup.json[0].id }}/keys"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body:
+      title: admin machine (Scripts/repos.sh)
+      key: "{{ gitlab_admin_key }}"
+    status_code: 201
+  when: >-
+    gitlab_admin_key_material not in (gitlab_admin_keys.json | map(attribute='key')
+    | map('regex_search', '^\S+ \S+') | list)
+  changed_when: true

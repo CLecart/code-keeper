@@ -60,7 +60,7 @@ variable "images" {
   description = "One ECR repository per image, shared by staging and production."
   type        = list(string)
   default = [
-    "api-gateway",
+    "api-gateway-app",
     "inventory-app",
     "inventory-database",
     "billing-app",

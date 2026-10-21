@@ -1,0 +1,45 @@
+- name: Look up the group {{ gitlab_group.path }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups/{{ gitlab_group.path }}"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    status_code: [200, 404]
+  register: gitlab_group_lookup
+
+- name: Create the group {{ gitlab_group.path }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/groups"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body:
+      name: "{{ gitlab_group.name }}"
+      path: "{{ gitlab_group.path }}"
+      description: "{{ gitlab_group.description }}"
+      visibility: private
+      project_creation_level: maintainer
+      subgroup_creation_level: owner
+    status_code: 201
+  register: gitlab_group_created
+  when: gitlab_group_lookup.status == 404
+  changed_when: true
+
+- name: Keep the group ID
+  ansible.builtin.set_fact:
+    gitlab_group_id: "{{ (gitlab_group_created.json if gitlab_group_created is changed else gitlab_group_lookup.json).id }}"
+
+- name: Set the group members
+  ansible.builtin.include_tasks: members.yml
+
+- name: Create and configure the projects
+  ansible.builtin.include_tasks: project.yml
+  loop: "{{ gitlab_projects }}"
+  loop_control:
+    loop_var: gitlab_project
+    label: "{{ gitlab_project.name }}"
+
+- name: Register the SSH key of the admin account
+  ansible.builtin.include_tasks: ssh_key.yml

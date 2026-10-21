@@ -1,0 +1,20 @@
+{
+  "name": "inventory-app",
+  "version": "1.0.0",
+  "description": "Inventory microservice: REST API for movies backed by PostgreSQL",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "pg": "^8.23.0"
+  }
+}

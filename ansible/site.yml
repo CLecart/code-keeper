@@ -21,6 +21,13 @@
   roles:
     - gitlab
 
+# API calls only, run from the admin machine.
+- name: Create the GitLab group, its members and the four projects
+  hosts: controller
+  gather_facts: false
+  roles:
+    - gitlab_projects
+
 - name: Install and register the GitLab Runner
   hosts: runners
   become: true

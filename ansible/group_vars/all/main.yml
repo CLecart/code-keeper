@@ -26,3 +26,35 @@ gitlab_users:
     name: Stakeholder
     email: stakeholder@example.com
     admin: false
+
+# Group holding the four repositories, one per application plus the infrastructure.
+gitlab_group:
+  name: code-keeper
+  path: code-keeper
+  description: Microservices of the code-keeper project and their infrastructure
+
+gitlab_projects:
+  - name: inventory-app
+    description: Inventory microservice (movies API, PostgreSQL)
+  - name: billing-app
+    description: Billing microservice (RabbitMQ consumer, PostgreSQL)
+  - name: api-gateway-app
+    description: API gateway (proxy to inventory-app, publishes billing orders)
+  - name: infra
+    description: Terraform infrastructure of the staging and production environments
+
+# Roles in the group: 30 Developer, 40 Maintainer, 50 Owner.
+gitlab_group_members:
+  - username: clecart
+    access_level: 50
+  # Approves the production deployments: only Maintainers may run the manual
+  # jobs of the protected main branch.
+  - username: stakeholder
+    access_level: 40
+  # Pushes branches and opens merge requests, never pushes to main.
+  - username: developer
+    access_level: 30
+
+# SSH key of the admin account, used by Scripts/repos.sh to push the repositories.
+gitlab_admin_username: clecart
+gitlab_admin_ssh_public_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/id_ed25519.pub"
