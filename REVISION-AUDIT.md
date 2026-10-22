@@ -144,7 +144,8 @@ Applications : `build` (npm ci + syntaxe), `test` (40/39/22 tests, rapport JUnit
 `sast-gate`, `dependency-scan` Trivy, `dockerfile-lint` hadolint), `containerization` (sur `main` : image construite,
 scannée, poussée dans ECR avec le commit comme étiquette). Le même fichier sert aux trois, seules deux variables
 changent. Infra : `images`, `init`, `validate` (fmt + validate), `plan` des deux environnements. Sur une demande de
-fusion, seuls `init` (sans état) et `validate` tournent, sans accès AWS.
+fusion, seuls `init` (sans état) et `validate` tournent, et `validate` seul sur un push de branche, sans accès AWS.
+Renovate : `validate-config` à chaque push et demande de fusion.
 
 ### 16. Expliquez le pipeline CD de chaque dépôt
 Applications : `deploy-staging` (mise à jour progressive : un nouveau pod prêt avant qu'un ancien s'arrête, pause de

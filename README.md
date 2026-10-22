@@ -115,7 +115,7 @@ flowchart LR
   runner -- "terraform, kubectl" --> prod
 ```
 
-- **GitLab reste fermé** : seuls l'IP de l'administrateur et le runner le joignent. AWS vérifie les jetons des
+- **GitLab reste fermé** : seuls l'IP de l'administrateur, celles de l'équipe (web seulement) et le runner le joignent. AWS vérifie les jetons des
   pipelines avec une copie des **clés publiques** de GitLab, déposée dans un stockage S3 public (méthode de la
   documentation GitLab pour une instance non publique).
 - **Aucune clé AWS** dans GitLab, sur le runner ou dans les pipelines : chaque job échange son jeton d'identité (OIDC)
@@ -137,7 +137,7 @@ flowchart LR
 
 | Événement | Ce qui tourne |
 |---|---|
-| Push ou demande de fusion sur une branche de travail | CI seulement, sans aucun accès AWS : build, test, scan (applications) ; `init` et `validate` sur une demande de fusion (`infra`) |
+| Push ou demande de fusion sur une branche de travail | CI seulement, sans aucun accès AWS : build, test, scan (applications) ; `validate`, plus `init` sur une demande de fusion (`infra`) ; validation de la configuration (`renovate`) |
 | Push sur `main` (protégée) | CI, image, déploiement en staging, puis **attente d'un Maintainer** pour la production |
 | Pipeline `infra` lancé à la main avec `DESTROY=true` (Maintainers seulement) | Suppression de staging, puis de la prod après approbation |
 | Programmation du projet `renovate` (chaque jour ouvré à 7 h) | Demandes de fusion de mises à jour de dépendances |
@@ -147,7 +147,7 @@ flowchart LR
 | Exigence | Où | Comment |
 |---|---|---|
 | GitLab déployé et configuré par Ansible | [ansible/](ansible/) | `site.yml` : CA du projet, système, GitLab (comptes, réglages, projets, variables CI), runners |
-| GitLab sur le cloud ou en local, accessible à l'équipe | [bootstrap/](bootstrap/) | EC2 à IP fixe, HTTPS, comptes `clecart`, `stakeholder`, `developer` |
+| GitLab sur le cloud ou en local, accessible à l'équipe | [bootstrap/](bootstrap/) | EC2 à IP fixe, HTTPS, comptes `clecart`, `stakeholder`, `developer` ; IP de l'équipe dans `team_cidrs` (web et Git en HTTPS, pas de SSH) |
 | Runners intégrés aux pipelines | [ansible/roles/gitlab_runner/](ansible/roles/gitlab_runner/) | 2 runners Docker enregistrés par l'API, en ligne, utilisés par tous les projets |
 | Un dépôt par application, un dépôt d'infrastructure indépendant | [repos/](repos/) | `inventory-app`, `billing-app`, `api-gateway-app`, `infra` (+ `renovate`) |
 | Infrastructure de cloud-design sur 2 environnements similaires, avec Terraform | [repos/infra/terraform/](repos/infra/terraform/) | Un module, deux appels : seuls le nom et le réseau diffèrent |
@@ -198,6 +198,8 @@ flowchart LR
   `~/.ssh/id_ed25519.pub`, ajoutée au compte GitLab `clecart` par Ansible (pour `git push`).
 - Son IP publique (`curl -s https://checkip.amazonaws.com`) dans `bootstrap/terraform.tfvars` : GitLab, le SSH et
   l'API des clusters EKS ne sont ouverts qu'à elle (et au runner).
+- Les IP des autres membres de l'équipe dans `team_cidrs` du même fichier, puis `terraform -chdir=bootstrap apply` :
+  elles n'ouvrent que GitLab (web et Git en HTTPS), jamais le SSH des machines ; `0.0.0.0/0` est refusé.
 
 ---
 
@@ -434,7 +436,8 @@ la trace de qui a approuvé et quand.
 Suppression (`DESTROY=true`) : `remove-platform-*` supprime d'abord l'espace `code-keeper` et attend la disparition
 de ses disques EBS (identifiés un par un), puis `destroy-*` recalcule le plan de suppression et l'applique (un
 « Retry » fonctionne donc après une interruption, voir [§4.6](#46-la-fin-de-séance)). Sur une demande de
-fusion, seuls `init` (sans état) et `validate` tournent, sans aucun accès AWS.
+fusion, seuls `init` (sans état) et `validate` tournent, et sur un push d'une autre branche, `validate` seul : sans
+aucun accès AWS.
 
 ### 6.2 Pipeline des applications
 
@@ -479,6 +482,8 @@ Le projet `renovate` lance l'image officielle chaque jour ouvré à 7 h. État l
 ouvertes, toutes avec un pipeline vert (Alpine 3.24, `amqplib` 2, `pg`, …), dont une **de sécurité** : `morgan` 1.12.1,
 qui corrige deux failles de gravité moyenne (CVE-2026-15603, CVE-2026-87859) signalées par la base OSV ; et un ticket
 « Dependency Dashboard » par dépôt. Le compte `renovate-bot` est Developer : il propose, un Maintainer décide.
+Chaque push ou demande de fusion du projet `renovate` lance `validate-config` (`renovate-config-validator --strict`
+sur `renovate.json` et `default.json`).
 
 ---
 
@@ -559,7 +564,7 @@ des variables à un pipeline.
 
 ### 7.5 Autres mesures
 
-- GitLab n'est joignable que par l'IP de l'administrateur et le runner ; HTTPS par la CA du projet ; IMDSv2 ; disques
+- GitLab n'est joignable que par l'IP de l'administrateur, celles de l'équipe (`team_cidrs`, web seulement) et le runner ; HTTPS par la CA du projet ; IMDSv2 ; disques
   chiffrés ; trafic HTTP redirigé vers HTTPS.
 - API publique : HTTPS (certificat AWS), jeton Cognito obligatoire sur `/api/*`, limite de débit (20 req/s).
 - API des clusters EKS : ouverte seulement à l'IP admin et au runner.
