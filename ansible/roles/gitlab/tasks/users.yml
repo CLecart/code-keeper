@@ -36,3 +36,37 @@
   when: item.json | length == 0
   changed_when: true
   no_log: true
+
+# Read after the creation above: a new account starts with the instance defaults.
+- name: Read the accounts without admin rights
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users?username={{ item.username }}"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+  delegate_to: localhost
+  become: false
+  loop: "{{ gitlab_users | rejectattr('admin') | list }}"
+  loop_control:
+    label: "{{ item.username }}"
+  register: gitlab_non_admin_lookups
+
+# Sent only when a value differs, so that a second run changes nothing.
+- name: Restrict the accounts without admin rights (no personal project, no top-level group)
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/users/{{ item.json[0].id }}"
+    method: PUT
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body: "{{ gitlab_non_admin_user_settings }}"
+  delegate_to: localhost
+  become: false
+  loop: "{{ gitlab_non_admin_lookups.results }}"
+  loop_control:
+    label: "{{ item.item.username }}"
+  when: >-
+    gitlab_non_admin_user_settings | dict2items
+    | difference(item.json[0] | dict2items) | length > 0
+  changed_when: true

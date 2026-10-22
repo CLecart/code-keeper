@@ -391,7 +391,7 @@ verrou de l'état Terraform. Si la suppression s'interrompt :
 | `api-token.sh staging\|prod` | Jeton Cognito d'un utilisateur de test (`auditor`) pour l'API publique |
 | `test-api.sh staging\|prod` | Scénario de bout en bout par l'URL publique : 16 contrôles |
 | `zero-downtime-test.sh staging\|prod api-gateway\|inventory-app [rollout\|drain]` | Requêtes en continu pendant une mise à jour progressive (`rollout`) ou la vidange d'un nœud (`drain`, nœud remis en service à la fin) ; compte les erreurs |
-| `protection-test.sh [application]` | Agit comme `developer` et vérifie qu'il ne peut ni déployer ni toucher à `main` |
+| `protection-test.sh [application]` | Agit comme `developer` et vérifie qu'il ne peut ni déployer, ni approuver la prod, ni toucher à `main`, ni créer de projet |
 | `rbac-test.sh staging\|prod` | Vérifie que le pipeline de chaque application ne peut modifier dans Kubernetes que ses propres objets : 118 contrôles (`kubectl auth can-i` au nom de son groupe, déploiement à blanc) |
 | `inventory.sh` | Inventaire des ressources payantes dans les 17 régions (machines, disques, IP, NAT, répartiteurs ALB/NLB et classiques, EKS, RDS, Lambda, groupes de journaux) |
 
@@ -496,7 +496,10 @@ sur `renovate.json` et `default.json`).
 - Les jobs qui touchent AWS ne tournent que sur `main` (`rules`) ; les variables CI sont **protégées** (données aux
   seules branches protégées) ; les rôles AWS n'acceptent que les jetons de `main` (§7.3).
 - Lancer un pipeline sur `main`, ou y passer une variable comme `DESTROY`, demande le rôle Maintainer.
-- Le runner « builder », qui a accès à Docker, ne prend que les jobs des branches protégées.
+- Le runner « builder », qui a accès à Docker, ne prend que les jobs des branches protégées. Les comptes sans droits
+  d'administration ne peuvent créer ni projet personnel ni groupe (Ansible : `projects_limit` à 0, `can_create_group`
+  à faux), et dans le groupe `code-keeper` seuls les Maintainers créent des projets : un Developer n'a donc aucun
+  projet à lui où protéger sa propre branche pour atteindre ce runner.
 - Vérifié par `Scripts/protection-test.sh` (le compte `developer`, rôle Developer) :
 
 | Tentative de `developer` | Résultat |
@@ -506,6 +509,8 @@ sur `renovate.json` et `default.json`).
 | Relancer un déploiement de production | Refusé (403) |
 | Lire les variables CI | Refusé (403) |
 | Pousser une branche | Permis : son pipeline ne fait que build, test et scan, et il passe |
+| Créer un projet personnel | Refusé (403) : *« You cannot create projects in your personal namespace »* |
+| Lancer `approve-production` d'une application | Refusé (403) ; sans approbation en attente, le contrôle est sauté (`SKIP`), sans échec |
 
 ### 7.2 Secrets hors du code
 
@@ -588,7 +593,7 @@ des variables à un pipeline.
 | Étapes du pipeline infra | Pipeline `infra` : images → init → validate → plan → apply-staging → approve-production → apply-production ; suppression : pipeline n° 36 (`DESTROY=true`) |
 | CI et CD des applications | Modifier une app (branche → demande de fusion → fusion) : le pipeline construit, teste, scanne, déploie en staging, attend l'approbation, déploie en prod |
 | Fonctionnement | `Scripts/test-api.sh staging` puis `prod` : 16/16 ; `Scripts/zero-downtime-test.sh staging api-gateway` (puis `… drain`) : 0 erreur |
-| Branches protégées | `Scripts/protection-test.sh` : 7 contrôles sur 7 ; ce que `developer` ne doit pas faire est refusé, sa branche de travail est acceptée et son pipeline (sans déploiement) passe |
+| Branches protégées | `Scripts/protection-test.sh` : 9 contrôles ; ce que `developer` ne doit pas faire est refusé (dont créer un projet et approuver la prod), sa branche de travail est acceptée et son pipeline (sans déploiement) passe |
 | Secrets hors du code | `git grep` sans résultat ; `ansible-vault view` ; variables masquées ; OIDC (aucune clé) |
 | Moindre privilège | Rôles IAM et leur politique de confiance ; limite de permissions ; `Scripts/rbac-test.sh staging` (droits Kubernetes de chaque pipeline d'application) ; Pod Security ; quota |
 | Mises à jour | Projet `renovate` : programmation, demandes de fusion, tableaux de bord ; Trivy et SAST dans les pipelines |

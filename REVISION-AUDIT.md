@@ -31,7 +31,7 @@ Avant l'audit : tout rallumer ([README §4.7](README.md#47-le-début-de-séance-
 | Infra 2 environnements | `diff` des deux `main.tf` ; pipeline `infra` et ses 7 étapes |
 | CI/CD | Une modification de code → demande de fusion → fusion → staging → approbation (`stakeholder`) → prod |
 | Fonctionnement | `Scripts/test-api.sh prod` (16/16) ; `Scripts/zero-downtime-test.sh staging api-gateway` (puis `… drain`) |
-| Sécurité | `Scripts/protection-test.sh` (7/7) ; rôles IAM ; `Scripts/rbac-test.sh staging` (droits Kubernetes des pipelines d'applications) ; Pod Security ; Renovate (demande de sécurité `morgan`) |
+| Sécurité | `Scripts/protection-test.sh` (9 contrôles, dont créer un projet et approuver la prod) ; rôles IAM ; `Scripts/rbac-test.sh staging` (droits Kubernetes des pipelines d'applications) ; Pod Security ; Renovate (demande de sécurité `morgan`) |
 
 ## Les 16 questions du jeu de rôle
 

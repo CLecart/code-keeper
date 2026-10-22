@@ -26,3 +26,13 @@ gitlab_settings:
   max_artifacts_size: 100
   default_artifacts_expire_in: 7 days
   gravatar_enabled: false
+
+# Settings of every account without admin rights (PUT /users/:id). The instance
+# defaults only apply to accounts created after they change, so each account is
+# set on its own.
+gitlab_non_admin_user_settings:
+  # No personal project and no top-level group: an account that owned a project
+  # could protect one of its branches and run its jobs on the instance runner
+  # "builder", which mounts the Docker socket of the runner machine.
+  projects_limit: 0
+  can_create_group: false
