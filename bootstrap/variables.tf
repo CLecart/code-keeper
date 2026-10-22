@@ -88,7 +88,7 @@ variable "gitlab_group" {
 }
 
 variable "images_to_keep" {
-  description = "Number of images kept per repository; older ones are expired by the lifecycle policy."
+  description = "Number of images kept per repository; older ones are expired by the lifecycle policy. Large enough that the image running in production (deployed after an approval) is never expired by newer staging images."
   type        = number
-  default     = 5
+  default     = 30
 }
