@@ -21,6 +21,9 @@ variables:
   K8S_WORKLOAD: deployment/api-gateway
   IMAGE: $ECR_REGISTRY/code-keeper/$APP_NAME
   TRIVY_IMAGE: public.ecr.aws/aquasecurity/trivy:0.76.1
+  # Runs the SAST analyzers in merge request pipelines too (the template only
+  # adds them to branch pipelines otherwise, and sast-gate needs semgrep-sast).
+  AST_ENABLE_MR_PIPELINES: "true"
 
 # One pipeline per change: the merge request pipeline when a merge request is
 # open, otherwise the branch pipeline.
@@ -70,7 +73,8 @@ build:
   stage: build
   script:
     - npm ci --no-audit --no-fund
-    - find src -name '*.js' -print -exec node --check {} \;
+    # xargs fails when one check fails (find -exec ... \; would always exit 0).
+    - find src -name '*.js' -print0 | xargs -0 -n 1 node --check
   artifacts:
     paths:
       - node_modules/
