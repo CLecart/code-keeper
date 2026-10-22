@@ -10,6 +10,8 @@ Passerelle d'API du projet code-keeper : elle transmet `/api/movies` à inventor
 | Tests | `npm ci && npm test` (test runner intégré de Node) |
 | Image | `code-keeper/api-gateway-app` dans Amazon ECR |
 
+En CI, le job `lint` (étape `scan`) applique les règles recommandées d'ESLint (`npm run lint`), et le job `integration-test` (étape `test`) démarre la passerelle réelle face à un vrai RabbitMQ (service GitLab) et à une inventory-app simulée (`npm run test:integration`, fichiers `integration/*.int.js`). En local, ces tests visent un RabbitMQ de test grâce à `INTEGRATION_RABBITMQ_HOST`, `INTEGRATION_RABBITMQ_PORT`, `RABBITMQ_DEFAULT_USER` et `RABBITMQ_DEFAULT_PASS`.
+
 ## Configuration (variables d'environnement)
 
 | Variable | Défaut | Rôle |
