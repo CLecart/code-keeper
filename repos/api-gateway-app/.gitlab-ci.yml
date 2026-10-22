@@ -165,7 +165,9 @@ containerization:
   image: public.ecr.aws/docker/library/docker:29.9.2-cli
   tags: [docker-build]
   extends: .aws
-  needs: [test, sast-gate, dependency-scan, dockerfile-lint]
+  # Every check of the build, test and scan stages must pass: a needs list
+  # starts the job as soon as the jobs it names succeed, whatever the others do.
+  needs: [test, integration-test, sast-gate, dependency-scan, dockerfile-lint, lint]
   before_script:
     - !reference [.aws, before_script]
     - apk add --no-cache aws-cli >/dev/null
