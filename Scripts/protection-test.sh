@@ -8,7 +8,8 @@
 #   3. re-running a production deployment of main            -> refused
 #   4. reading the CI/CD variables of a project              -> refused
 #   5. pushing a branch                                      -> allowed: its
-#      pipeline runs build, test and scan only (no image, no deployment)
+#      pipeline runs build, test and scan only (no image, no deployment), and
+#      passes; the branch is deleted once that pipeline has finished
 #   6. the branch pipeline cannot assume an AWS role: covered by the OIDC trust
 #      policies (main only), shown by the job list of step 5
 #
@@ -97,6 +98,16 @@ if [[ "$jobs" == *containerization* || "$jobs" == *deploy* || "$jobs" == *approv
 else
   echo "  PASS  6. the branch pipeline only builds, tests and scans (no image, no deployment, no AWS role)"
 fi
+
+# The branch must outlive its pipeline: deleted earlier, the jobs cannot fetch it.
+echo "  waiting for the branch pipeline to finish (it may wait for a free runner)..."
+status=""
+for _ in $(seq 1 90); do
+  status="$(as_root "$API/projects/$project/pipelines/$pipeline" | jq -r .status)"
+  case "$status" in success | failed | canceled | skipped) break ;; esac
+  sleep 10
+done
+check "7. the branch pipeline passes (status $status)" "$status" success
 
 echo
 if [[ "$failed" -eq 0 ]]; then echo "All protection checks passed"; else echo "$failed protection check(s) failed"; exit 1; fi
