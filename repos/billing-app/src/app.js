@@ -24,6 +24,7 @@ export function createApp({ db, queue, logger }) {
   });
 
   // Express recognises error handlers by their four-argument signature.
+  // eslint-disable-next-line no-unused-vars -- next must stay in that signature
   app.use((err, req, res, next) => {
     logger.error('request failed', { method: req.method, path: req.path, err });
     res.status(500).json({ error: 'Internal server error' });

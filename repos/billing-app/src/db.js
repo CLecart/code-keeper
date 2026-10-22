@@ -21,7 +21,7 @@ export function createDatabase(config, logger) {
           return;
         } catch (err) {
           if (attempt === attempts) {
-            throw new Error(`Database unreachable after ${attempts} attempts: ${err.message}`);
+            throw new Error(`Database unreachable after ${attempts} attempts: ${err.message}`, { cause: err });
           }
           logger.warn('database not ready, retrying', { attempt, attempts, delayMs, err });
           await sleep(delayMs);

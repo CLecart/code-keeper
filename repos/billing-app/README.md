@@ -10,6 +10,8 @@ Microservice de facturation du projet code-keeper : il lit les commandes dans la
 | Tests | `npm ci && npm test` (test runner intégré de Node) |
 | Image | `code-keeper/billing-app` dans Amazon ECR |
 
+Le pipeline lance aussi `npm run lint` (job `lint`, règles recommandées d'ESLint) et `npm run test:integration` (job `integration-test`) : l'application démarre contre une vraie base PostgreSQL 17 et une vraie file RabbitMQ 4 (services GitLab), et les tests vérifient qu'une commande publiée dans la file est enregistrée en base et qu'un message invalide ne l'est jamais. Pour les lancer en local contre ses propres conteneurs, les variables à définir sont indiquées en tête de `integration/billing.int.js`.
+
 ## Configuration (variables d'environnement)
 
 | Variable | Défaut | Rôle |
