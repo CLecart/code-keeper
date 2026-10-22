@@ -1,7 +1,7 @@
 # inventory-app: Node.js REST API for movies (CRUD on the inventory-db database).
 #
 # Stateless, so it runs as a Deployment scaled by a HorizontalPodAutoscaler
-# between 1 and 5 replicas on CPU usage. Reachable inside the cluster at
+# between 2 and 5 replicas on CPU usage. Reachable inside the cluster at
 # inventory-app:8080, the Service load-balancing across the replicas.
 
 apiVersion: v1
@@ -140,7 +140,9 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: inventory-app
-  minReplicas: 1
+  # Two replicas at least: one keeps serving while the other is moved off a
+  # node under maintenance (PodDisruptionBudget below).
+  minReplicas: 2
   maxReplicas: 5
   metrics:
     # Scale out when the average CPU usage exceeds 60 % of the request (100m).
@@ -154,3 +156,22 @@ spec:
     # Scale back in after 1 minute of low load instead of the default 5.
     scaleDown:
       stabilizationWindowSeconds: 60
+---
+# Node maintenance (EKS node group update, kubectl drain) evicts pods through
+# the eviction API, which honours this budget: one replica at a time, the next
+# one only once the replacement of the previous one is ready on another node.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: inventory-app
+  labels:
+    app: inventory-app
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  maxUnavailable: 1
+  # A replica that is not ready (database unreachable) is evicted anyway: it
+  # must not hold up the drain, which fails an EKS node update after 15 minutes.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      app: inventory-app

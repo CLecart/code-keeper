@@ -4,7 +4,7 @@
 #   POST /api/billing  -> published into the RabbitMQ "billing_queue"
 #
 # Stateless, so it runs as a Deployment scaled by a HorizontalPodAutoscaler
-# between 1 and 5 replicas on CPU usage. It never talks to billing-app
+# between 2 and 5 replicas on CPU usage. It never talks to billing-app
 # directly: billing orders are accepted even while billing-app is stopped.
 
 # NodePort Service: every node listens on 30080 and kube-proxy balances the
@@ -149,7 +149,9 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: api-gateway
-  minReplicas: 1
+  # Two replicas at least: one keeps serving while the other is moved off a
+  # node under maintenance (PodDisruptionBudget below).
+  minReplicas: 2
   maxReplicas: 5
   metrics:
     # Scale out when the average CPU usage exceeds 60 % of the request (100m).
@@ -163,3 +165,22 @@ spec:
     # Scale back in after 1 minute of low load instead of the default 5.
     scaleDown:
       stabilizationWindowSeconds: 60
+---
+# Node maintenance (EKS node group update, kubectl drain) evicts pods through
+# the eviction API, which honours this budget: one replica at a time, the next
+# one only once the replacement of the previous one is ready on another node.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  maxUnavailable: 1
+  # A replica that is not ready is evicted anyway: it must not hold up the
+  # drain, which fails an EKS node update after 15 minutes.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      app: api-gateway
