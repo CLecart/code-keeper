@@ -22,10 +22,11 @@ workflow:
       when: never
     - if: $CI_COMMIT_BRANCH
 
-# Same image as the renovate job (already on the runner), same version of the checks.
+# The same Renovate version as the renovate job, without the update tools of the
+# "full" image (2 GB instead of 10 on the runner disk): the validator is in both.
 validate-config:
   image:
-    name: ghcr.io/renovatebot/renovate:44.176.2-full
+    name: ghcr.io/renovatebot/renovate:44.176.2
     pull_policy: always
   script:
     - renovate-config-validator --strict renovate.json default.json
