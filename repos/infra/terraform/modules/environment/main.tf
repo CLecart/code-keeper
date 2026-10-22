@@ -11,9 +11,13 @@ data "aws_availability_zones" "available" {
 
 locals {
   # Cluster name and prefix of every resource. The CI role of the infra
-  # pipeline may only manage IAM roles and policies starting with it.
+  # pipeline may only manage IAM roles starting with it.
   name = "${var.project}-${var.environment}"
 
   account_id = data.aws_caller_identity.current.account_id
-  azs        = slice(data.aws_availability_zones.available.names, 0, 2)
+
+  # Boundary created by bootstrap/iam.tf (code-keeper repository): the CI role
+  # of the infra pipeline may only create IAM roles that carry it.
+  permissions_boundary = "arn:aws:iam::${local.account_id}:policy/${var.project}-environment-boundary"
+  azs                  = slice(data.aws_availability_zones.available.names, 0, 2)
 }

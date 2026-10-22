@@ -20,7 +20,8 @@ resource "aws_cloudwatch_log_group" "containers" {
 }
 
 resource "aws_iam_role" "fluent_bit" {
-  name = "${local.name}-fluent-bit"
+  name                 = "${local.name}-fluent-bit"
+  permissions_boundary = local.permissions_boundary
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

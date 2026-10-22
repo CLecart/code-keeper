@@ -14,6 +14,9 @@ module "eks" {
   # cluster admin; the other identities come from access_entries below.
   enable_cluster_creator_admin_permissions = true
 
+  # Every IAM role of the environment carries the boundary (see main.tf).
+  iam_role_permissions_boundary = local.permissions_boundary
+
   # The pods get their AWS permissions through EKS Pod Identity, not IRSA.
   enable_irsa = false
 
@@ -61,7 +64,8 @@ module "eks" {
       max_size     = var.node_max_size
 
       # Named after the environment like every other IAM role (see main.tf).
-      iam_role_name = "${local.name}-nodes"
+      iam_role_name                 = "${local.name}-nodes"
+      iam_role_permissions_boundary = local.permissions_boundary
     }
   }
 
@@ -96,7 +100,8 @@ module "eks" {
 
 # Role assumed by the EBS CSI controller through EKS Pod Identity.
 resource "aws_iam_role" "ebs_csi" {
-  name = "${local.name}-ebs-csi"
+  name                 = "${local.name}-ebs-csi"
+  permissions_boundary = local.permissions_boundary
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

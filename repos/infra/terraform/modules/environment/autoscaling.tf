@@ -8,7 +8,8 @@
 # node_min_size and node_max_size (eks.tf).
 
 resource "aws_iam_role" "cluster_autoscaler" {
-  name = "${local.name}-cluster-autoscaler"
+  name                 = "${local.name}-cluster-autoscaler"
+  permissions_boundary = local.permissions_boundary
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
