@@ -20,6 +20,8 @@ démonstration. Les détails sont dans le [README](README.md).
 
 ## Déroulé de la démonstration
 
+Avant l'audit : tout rallumer ([README §4.7](README.md#47-le-début-de-séance-et-avant-laudit)), compter environ 45 min.
+
 | Question de la grille | Ce que je montre |
 |---|---|
 | Fichiers du dépôt | `tree -L 2` ; README ; `ansible/` ; `repos/*/.gitlab-ci.yml` |

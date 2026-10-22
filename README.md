@@ -35,6 +35,8 @@ résultats cités ont été mesurés sur l'infrastructure réellement construite
 > # 4. Vérifier l'application de bout en bout (16 contrôles chacun)
 > Scripts/test-api.sh staging && Scripts/test-api.sh prod
 >
+> # Début de séance : Scripts/tooling.sh start, puis le pipeline infra et ceux des applications (§4.7)
+>
 > # Fin de séance : pipeline infra lancé à la main avec DESTROY=true, puis
 > Scripts/tooling.sh stop && Scripts/inventory.sh
 > ```
@@ -361,6 +363,16 @@ verrou de l'état Terraform. Si la suppression s'interrompt :
 | La suppression de staging a échoué | La prod ne peut pas être approuvée dans ce pipeline : finir staging (Retry), puis nouveau pipeline `DESTROY=true` |
 | `Error acquiring the state lock` | Vérifier qu'aucun pipeline ne tourne, puis depuis le poste admin : `terraform -chdir=repos/infra/terraform/envs/<env> init -backend-config="bucket=$(terraform -chdir=bootstrap output -raw state_bucket)"` et `terraform -chdir=repos/infra/terraform/envs/<env> force-unlock <ID du message>` |
 | Dernier recours | Depuis le poste admin, après le même `init` : `repos/infra/scripts/remove-platform.sh <env>`, puis `terraform -chdir=repos/infra/terraform/envs/<env> destroy` |
+
+### 4.7 Le début de séance (et avant l'audit)
+
+1. `Scripts/tooling.sh start` : GitLab et le runner redémarrent, avec les mêmes adresses IP.
+2. GitLab → projet `infra` → **Build → Pipelines → New pipeline**, branche `main`, sans changer `DESTROY` (`false`) :
+   staging (≈ 16 min), puis approbation et prod (≈ 13 min).
+3. Pour chaque application, **New pipeline** sur `main` : l'image du dernier commit est déjà dans ECR (pas de
+   reconstruction) ; le pipeline la déploie en staging, puis en prod après approbation.
+4. `Scripts/test-api.sh staging` puis `prod` : l'utilisateur de test Cognito est recréé automatiquement (les bases
+   repartent vides).
 
 ---
 
