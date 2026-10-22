@@ -76,16 +76,22 @@
   when: gitlab_main_lookup.status == 404
   changed_when: true
 
-# The IAM role this project's main branch assumes through OIDC (bootstrap/iam.tf).
+# The IAM role this project's main branch assumes through OIDC (bootstrap/iam.tf)
+# when it has one, plus the variables declared for the project in gitlab_projects.
 - name: Set the CI/CD variables of {{ gitlab_project.name }}
   ansible.builtin.include_tasks: ci_variable.yml
   vars:
     ci_variable_scope: projects
     ci_variable_owner: "{{ gitlab_project_data.id }}"
-  loop:
-    - key: AWS_ROLE_ARN
-      value: "{{ ci_role_arns[gitlab_project.name] }}"
-      description: IAM role of this project, assumed with its CI ID token (OIDC)
+  loop: >-
+    {{ ([{'key': 'AWS_ROLE_ARN', 'value': ci_role_arns[gitlab_project.name],
+          'description': 'IAM role of this project, assumed with its CI ID token (OIDC)'}]
+        if gitlab_project.name in ci_role_arns else [])
+       + (gitlab_project.variables | default([])) }}
   loop_control:
     loop_var: ci_variable
     label: "{{ ci_variable.key }}"
+
+- name: Schedule the pipeline of {{ gitlab_project.name }}
+  ansible.builtin.include_tasks: schedule.yml
+  when: gitlab_project.schedule is defined

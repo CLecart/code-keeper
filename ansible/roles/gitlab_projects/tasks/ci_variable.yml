@@ -3,8 +3,9 @@
 #   ci_variable_owner  ID of the group or project
 #   ci_variable        {key, value, description}
 # Every variable is protected (only jobs of protected branches receive it) and
-# raw (no expansion). None of them is a secret: the AWS access itself comes
-# from OIDC, so nothing needs masking.
+# raw (no expansion). The AWS access comes from OIDC, so the only secret is the
+# Renovate token, declared with masked: true (hidden in job logs, and in the
+# output of this playbook).
 - name: Look up the variable {{ ci_variable.key }}
   ansible.builtin.uri:
     url: "{{ gitlab_api_url }}/{{ ci_variable_scope }}/{{ ci_variable_owner }}/variables/{{ ci_variable.key }}"
@@ -13,6 +14,7 @@
     ca_path: "{{ pki_ca_cert }}"
     status_code: [200, 404]
   register: gitlab_ci_variable_current
+  no_log: "{{ ci_variable.masked | default(false) }}"
 
 - name: Create the variable {{ ci_variable.key }}
   ansible.builtin.uri:
@@ -22,10 +24,11 @@
       PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
     ca_path: "{{ pki_ca_cert }}"
     body_format: json
-    body: "{{ ci_variable | combine(gitlab_ci_variable_flags) }}"
+    body: "{{ gitlab_ci_variable_flags | combine(ci_variable) }}"
     status_code: 201
   when: gitlab_ci_variable_current.status == 404
   changed_when: true
+  no_log: "{{ ci_variable.masked | default(false) }}"
 
 - name: Update the variable {{ ci_variable.key }}
   ansible.builtin.uri:
@@ -35,10 +38,11 @@
       PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
     ca_path: "{{ pki_ca_cert }}"
     body_format: json
-    body: "{{ ci_variable | combine(gitlab_ci_variable_flags) }}"
+    body: "{{ gitlab_ci_variable_flags | combine(ci_variable) }}"
   when:
     - gitlab_ci_variable_current.status == 200
     - >-
-      (ci_variable | combine(gitlab_ci_variable_flags) | dict2items)
+      (gitlab_ci_variable_flags | combine(ci_variable) | dict2items)
       | difference(gitlab_ci_variable_current.json | dict2items) | length > 0
   changed_when: true
+  no_log: "{{ ci_variable.masked | default(false) }}"

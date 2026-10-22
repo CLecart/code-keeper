@@ -8,3 +8,6 @@ vault_gitlab_user_passwords:
   clecart: "<random, 24 characters>"
   developer: "<random, 24 characters>"
   stakeholder: "<random, 24 characters>"
+  renovate-bot: "<random, 24 characters>"
+# Personal access token of the Renovate bot (exactly 20 characters).
+vault_renovate_token: "<random, 20 characters>"

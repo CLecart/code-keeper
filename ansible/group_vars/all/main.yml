@@ -26,6 +26,11 @@ gitlab_users:
     name: Stakeholder
     email: stakeholder@example.com
     admin: false
+  # Opens the dependency update merge requests (code-keeper/renovate).
+  - username: renovate-bot
+    name: Renovate Bot
+    email: renovate-bot@example.com
+    admin: false
 
 # Group holding the four repositories, one per application plus the infrastructure.
 gitlab_group:
@@ -42,6 +47,18 @@ gitlab_projects:
     description: API gateway (proxy to inventory-app, publishes billing orders)
   - name: infra
     description: Terraform infrastructure of the staging and production environments
+  # Maintenance: runs Renovate every working day to keep the dependencies of the
+  # four repositories up to date and to report security advisories.
+  - name: renovate
+    description: Renovate bot, automated dependency updates of the group
+    variables:
+      - key: RENOVATE_TOKEN
+        value: "{{ vault_renovate_token }}"
+        description: Personal access token of renovate-bot (api, read_user, write_repository)
+        masked: true
+    schedule:
+      description: Renovate, every working day
+      cron: "0 7 * * 1-5"
 
 # Roles in the group: 30 Developer, 40 Maintainer, 50 Owner.
 gitlab_group_members:
@@ -53,6 +70,9 @@ gitlab_group_members:
     access_level: 40
   # Pushes branches and opens merge requests, never pushes to main.
   - username: developer
+    access_level: 30
+  # Same rights as a developer: update branches and merge requests only.
+  - username: renovate-bot
     access_level: 30
 
 # SSH key of the admin account, used by Scripts/repos.sh to push the repositories.

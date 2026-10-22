@@ -21,9 +21,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NAMESPACE="code-keeper"
 IMAGES=(inventory-database billing-database rabbitmq-server)
-# Chart versions pinned so every run installs exactly the same thing.
+# Chart versions pinned so every run installs exactly the same thing; Renovate
+# (code-keeper/renovate) proposes their updates through the comments below.
+# renovate: datasource=helm depName=kube-prometheus-stack registryUrl=https://prometheus-community.github.io/helm-charts
 KUBE_PROMETHEUS_STACK_VERSION="92.11.0"
+# renovate: datasource=helm depName=fluent-bit registryUrl=https://fluent.github.io/helm-charts
 FLUENT_BIT_VERSION="0.58.3"
+# renovate: datasource=helm depName=cluster-autoscaler registryUrl=https://kubernetes.github.io/autoscaler
 CLUSTER_AUTOSCALER_VERSION="9.59.0"
 
 env="${1:-}"

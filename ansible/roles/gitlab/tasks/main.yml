@@ -89,11 +89,29 @@
   retries: 60
   delay: 10
 
+# Ansible talks to the GitLab API with a personal access token of root.
 - name: Prepare the API token of Ansible
-  ansible.builtin.include_tasks: api_token.yml
+  ansible.builtin.include_tasks: personal_token.yml
+  vars:
+    personal_token_user: root
+    personal_token_name: ansible
+    personal_token_scopes: [api, create_runner]
+    personal_token_days: 30
+    personal_token_value: "{{ vault_gitlab_api_token }}"
 
 - name: Apply the instance settings
   ansible.builtin.include_tasks: settings.yml
 
 - name: Create the user accounts
   ansible.builtin.include_tasks: users.yml
+
+# Token of the Renovate bot (code-keeper/renovate project), with the scopes
+# its documentation asks for: api, read_user, write_repository.
+- name: Prepare the token of the Renovate bot
+  ansible.builtin.include_tasks: personal_token.yml
+  vars:
+    personal_token_user: renovate-bot
+    personal_token_name: renovate
+    personal_token_scopes: [api, read_user, write_repository]
+    personal_token_days: 90
+    personal_token_value: "{{ vault_renovate_token }}"

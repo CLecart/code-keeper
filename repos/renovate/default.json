@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Shared Renovate settings of the code-keeper group, used by every repository through the preset local>code-keeper/renovate",
+  "extends": ["config:recommended", ":timezone(Europe/Paris)"],
+  "dependencyDashboard": true,
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "labels": ["security"]
+  },
+  "labels": ["dependencies"],
+  "prHourlyLimit": 2,
+  "prConcurrentLimit": 5,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Trivy image given through a variable (TRIVY_IMAGE) in the CI files and scripts",
+      "managerFilePatterns": ["/(^|/)\\.gitlab-ci\\.yml$/", "/(^|/)scripts/[^/]+\\.sh$/"],
+      "matchStrings": ["(?<depName>public\\.ecr\\.aws/aquasecurity/trivy):(?<currentValue>[0-9][^\\s\"']*)"],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Helm chart versions pinned in scripts/deploy-platform.sh, announced by a '# renovate:' comment",
+      "managerFilePatterns": ["/(^|/)scripts/deploy-platform\\.sh$/"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)\\s+registryUrl=(?<registryUrl>\\S+)\\s*\\n[A-Z_]+=\"(?<currentValue>[^\"]+)\""
+      ]
+    }
+  ]
+}

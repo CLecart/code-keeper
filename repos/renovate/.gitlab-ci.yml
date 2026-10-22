@@ -1,0 +1,47 @@
+# Pipeline of code-keeper/renovate: runs Renovate (self-hosted, official image,
+# set up as the renovate-bot/renovate-runner project advises) on the
+# repositories of the group, from the pipeline schedule (every working day) or
+# by hand (Build > Pipeline schedules > Run).
+#
+# Renovate opens a merge request for each dependency update it finds (npm
+# packages, Docker base and CI images, Terraform providers and modules, Helm
+# charts) and a "security" one when the OSV database lists a vulnerability of
+# a direct dependency; each repository gets a "Dependency Dashboard" issue.
+# The merge requests run the CI of their repository and wait for a Maintainer.
+#
+# RENOVATE_TOKEN: masked and protected CI variable (token of renovate-bot, a
+# Developer of the group: it can open merge requests, never push to main).
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "web"
+
+variables:
+  RENOVATE_PLATFORM: gitlab
+  RENOVATE_ENDPOINT: $CI_API_V4_URL
+  # Only the repositories of the group that hold a renovate.json.
+  RENOVATE_AUTODISCOVER: "true"
+  RENOVATE_AUTODISCOVER_FILTER: "code-keeper/*"
+  RENOVATE_ONBOARDING: "false"
+  RENOVATE_REQUIRE_CONFIG: required
+  RENOVATE_GIT_AUTHOR: "Renovate Bot <renovate-bot@example.com>"
+  RENOVATE_BASE_DIR: $CI_PROJECT_DIR/renovate
+  RENOVATE_REPOSITORY_CACHE: enabled
+  LOG_LEVEL: info
+
+renovate:
+  image:
+    name: ghcr.io/renovatebot/renovate:44.176.2
+    pull_policy: always
+  cache:
+    key: renovate-repository-cache
+    paths:
+      - renovate/cache/renovate/repository/
+  script:
+    # GitLab's certificate is signed by the project CA: Renovate (Node.js) trusts
+    # it through NODE_EXTRA_CA_CERTS, git through a bundle that adds it to the
+    # public CAs (the job does not run as root, update-ca-certificates is out).
+    - cat /etc/ssl/certs/ca-certificates.crt "$CI_SERVER_TLS_CA_FILE" > /tmp/ca-bundle.crt
+    - export NODE_EXTRA_CA_CERTS="$CI_SERVER_TLS_CA_FILE" GIT_SSL_CAINFO=/tmp/ca-bundle.crt
+    - renovate

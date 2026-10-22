@@ -33,8 +33,10 @@ def secret(length):
 print(f'vault_gitlab_root_password: "{secret(24)}"')
 print(f'vault_gitlab_api_token: "{secret(20)}"')
 print("vault_gitlab_user_passwords:")
-for user in ("clecart", "developer", "stakeholder"):
+for user in ("clecart", "developer", "stakeholder", "renovate-bot"):
     print(f'  {user}: "{secret(24)}"')
+# Personal access token of the Renovate bot (exactly 20 characters).
+print(f'vault_renovate_token: "{secret(20)}"')
 PY
 
 echo "Created the encrypted secrets: $VAULT_FILE"

@@ -1,0 +1,30 @@
+# Pipeline schedule of a project (gitlab_project.schedule: description, cron),
+# on main, in the Paris time zone. A schedule needs a branch to run on, so it
+# is created once the repository has been pushed (Scripts/repos.sh push).
+- name: Read the pipeline schedules of {{ gitlab_project.name }}
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ gitlab_project_data.id }}/pipeline_schedules"
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+  register: gitlab_schedules
+
+- name: Create the schedule "{{ gitlab_project.schedule.description }}"
+  ansible.builtin.uri:
+    url: "{{ gitlab_api_url }}/projects/{{ gitlab_project_data.id }}/pipeline_schedules"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ vault_gitlab_api_token }}"
+    ca_path: "{{ pki_ca_cert }}"
+    body_format: json
+    body:
+      description: "{{ gitlab_project.schedule.description }}"
+      ref: main
+      cron: "{{ gitlab_project.schedule.cron }}"
+      cron_timezone: Europe/Paris
+      active: true
+    status_code: 201
+  when:
+    - not gitlab_project_data.empty_repo
+    - gitlab_project.schedule.description not in (gitlab_schedules.json | map(attribute='description') | list)
+  changed_when: true
