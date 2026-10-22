@@ -14,7 +14,7 @@ Robot de mise à jour des dépendances du groupe code-keeper : [Renovate](https:
 
 | Fichier | Rôle |
 |---|---|
-| `.gitlab-ci.yml` | Le job `renovate` (image officielle `ghcr.io/renovatebot/renovate`), lancé seulement par la programmation ou à la main sur `main` |
+| `.gitlab-ci.yml` | Le job `renovate` (image officielle `ghcr.io/renovatebot/renovate`), lancé seulement par la programmation ou à la main sur `main` ; le job `validate-config` (`renovate-config-validator --strict`), à chaque push et demande de fusion |
 | `default.json` | Réglages communs, repris par chaque dépôt avec `"extends": ["local>code-keeper/renovate"]` |
 | `renovate.json` | Ce dépôt se met lui-même à jour (version de l'image Renovate) |
 
