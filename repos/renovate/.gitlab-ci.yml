@@ -31,8 +31,11 @@ variables:
   LOG_LEVEL: info
 
 renovate:
+  # The "full" image ships the tools that update the lock files (npm...). The
+  # default image downloads them from GitHub, whose API refuses anonymous
+  # clients after a few calls: the lock files were then left behind.
   image:
-    name: ghcr.io/renovatebot/renovate:44.176.2
+    name: ghcr.io/renovatebot/renovate:44.176.2-full
     pull_policy: always
   cache:
     key: renovate-repository-cache
