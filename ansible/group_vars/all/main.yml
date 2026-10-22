@@ -9,7 +9,7 @@ pki_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.local/share/code-keeper/p
 pki_ca_cert: "{{ pki_dir }}/ca.crt"
 
 # Pinned versions, upgraded on purpose by changing them here and re-running the playbook.
-gitlab_version: "19.5.0-ce.0"
+gitlab_version: "19.5.1-ce.0"
 gitlab_runner_version: "19.5.0-1"
 
 # Accounts created by the playbook. Passwords are in the vault (vault.yml).
