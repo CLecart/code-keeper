@@ -155,6 +155,11 @@ describe('billing-app with a real PostgreSQL and RabbitMQ', () => {
     config = settings();
 
     admin = new pg.Pool({ ...config.postgres, database: 'postgres', max: 1, connectionTimeoutMillis: 5000 });
+    // pg rethrows an error of an idle pool client as an uncaught exception,
+    // which fails the whole file: e.g. "terminating connection due to
+    // administrator command" when the server ends that connection. Only
+    // reported: a query that really fails still rejects its own promise.
+    admin.on('error', (err) => console.log(`# idle client of the admin pool: ${err.message}`));
     await retry('PostgreSQL', () => admin.query('SELECT 1'));
     connection = await retry('RabbitMQ', () => amqp.connect(config.rabbitmq, { timeout: 5000 }));
     // A broken connection or channel makes the next call fail with the reason;
@@ -164,6 +169,7 @@ describe('billing-app with a real PostgreSQL and RabbitMQ', () => {
     await admin.query(`CREATE DATABASE ${pg.escapeIdentifier(DATABASE)}`);
     databaseCreated = true;
     db = new pg.Pool({ ...config.postgres, database: DATABASE, max: 2 });
+    db.on('error', (err) => console.log(`# idle client of the test pool: ${err.message}`));
     // Schema of the platform database (see the header of the fixture).
     await db.query(await readFile(join(import.meta.dirname, 'fixtures', '01-schema.sql'), 'utf8'));
 

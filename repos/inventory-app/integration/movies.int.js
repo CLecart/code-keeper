@@ -40,11 +40,17 @@ before(
   async () => {
     assert.ok(postgres.password, 'POSTGRES_PASSWORD must hold the password of the postgres user');
     admin = new pg.Pool({ ...postgres, database: 'postgres', connectionTimeoutMillis: 2000 });
+    // pg rethrows an error of an idle pool client as an uncaught exception,
+    // which fails the whole file: e.g. "terminating connection due to
+    // administrator command" when the server ends that connection. Only
+    // reported: a query that really fails still rejects its own promise.
+    admin.on('error', (err) => console.log(`# idle client of the admin pool: ${err.message}`));
     await waitForPostgres(admin);
 
     await admin.query(`CREATE DATABASE "${database}"`);
     databaseCreated = true;
     db = new pg.Pool({ ...postgres, database });
+    db.on('error', (err) => console.log(`# idle client of the test pool: ${err.message}`));
     await db.query(await readFile(new URL('schema.sql', import.meta.url), 'utf8'));
 
     const port = await freePort();
