@@ -32,7 +32,7 @@ Tout le reste (types et nombre de machines, services, réglages) est identique.
 | Script | Rôle |
 |---|---|
 | `scripts/deploy-platform.sh staging\|prod` | Installe la couche plateforme après `terraform apply` |
-| `scripts/remove-platform.sh staging\|prod` | Supprime l'espace `code-keeper` et attend la suppression de ses disques EBS, **avant** `terraform destroy` |
+| `scripts/remove-platform.sh staging\|prod` | Supprime l'espace `code-keeper` et attend la suppression de ses disques EBS, **avant** `terraform destroy` ; relancé après une suppression interrompue, il passe ce qui est déjà fait |
 | `scripts/image-tag.sh <image>` | Étiquette d'une image de plateforme : le dernier commit qui a modifié `images/<image>` |
 | `scripts/grafana.sh staging\|prod` | Ouvre Grafana sur http://localhost:3001 (port-forward) |
 

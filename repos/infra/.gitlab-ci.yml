@@ -212,7 +212,7 @@ plan-production:
     - *on-main
 
 # Deletion: the namespace and its EBS volumes go first, while the cluster still
-# runs (scripts/remove-platform.sh), then the destroy plan of the plan stage.
+# runs (scripts/remove-platform.sh), then terraform destroys the environment.
 .remove-platform:
   extends: .kubernetes
   script:
@@ -220,11 +220,15 @@ plan-production:
   rules:
     - *destroy-on-main
 
+# The destroy plan is computed again in the job: after an interrupted destroy,
+# a Retry then works (Terraform refuses a saved plan once the state has
+# changed). The plan of the plan stage remains the one to review.
 .destroy:
   extends: .terraform
   timeout: 45m
   script:
-    - terraform -chdir="terraform/envs/$ENV" apply plan.tfplan
+    - terraform -chdir="terraform/envs/$ENV" plan -destroy -lock-timeout=5m -out=destroy.tfplan
+    - terraform -chdir="terraform/envs/$ENV" apply -lock-timeout=5m destroy.tfplan
   rules:
     - *destroy-on-main
 
@@ -331,8 +335,11 @@ remove-platform-production:
   variables:
     ENV: prod
   resource_group: production
+  # The production plan must have succeeded too: its data is deleted here, and
+  # destroy-production needs it.
   needs:
     - approve-production
+    - plan-production
   environment:
     name: production
     action: prepare
