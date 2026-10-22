@@ -17,6 +17,9 @@ preuves/
 ansible/inventory/hosts.yml
 ansible/group_vars/all/vault.yml
 
+# Password of the Cognito test user created by Scripts/api-token.sh (one file per environment)
+.cognito-test-user*
+
 # AWS access keys downloaded from the IAM console
 *accessKeys*.csv
 *credentials*.csv
