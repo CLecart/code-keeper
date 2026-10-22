@@ -39,6 +39,11 @@ async function main() {
   const server = app.listen(config.port, () => {
     logger.info('api gateway listening', { port: config.port, inventoryUrl: config.inventoryUrl, logDir: config.logDir });
   });
+  // The internal ALB keeps idle connections open for 60 s. Node closes them
+  // after 5 s by default, possibly just as the ALB reuses one (the client then
+  // gets a 502): keep them longer than the ALB does.
+  server.keepAliveTimeout = 65000;
+  server.headersTimeout = 66000;
 
   const shutdown = async (signal) => {
     logger.info('shutdown requested', { signal });
