@@ -82,17 +82,14 @@ module "eks" {
         }
       }
     },
-    # Deployment jobs of each application: edit rights in the application
-    # namespace only (bootstrap/iam.tf of the code-keeper repository).
+    # Deployment jobs of each application (bootstrap/iam.tf of the code-keeper
+    # repository): no EKS access policy, only a Kubernetes group. The Role bound
+    # to that group (platform/rbac.yaml) covers the objects of the application
+    # alone: never the databases, RabbitMQ, the Secrets or another application.
     {
       for app in var.applications : "ci-${app}" => {
-        principal_arn = "arn:aws:iam::${local.account_id}:role/${var.project}-ci-${app}"
-        policy_associations = {
-          edit = {
-            policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy"
-            access_scope = { type = "namespace", namespaces = [var.app_namespace] }
-          }
-        }
+        principal_arn     = "arn:aws:iam::${local.account_id}:role/${var.project}-ci-${app}"
+        kubernetes_groups = ["${var.project}-deploy-${app}"]
       }
     },
   )

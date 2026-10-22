@@ -157,7 +157,7 @@ flowchart LR
 | Toute modification du code redéployée en staging puis en prod après approbation | idem | Push sur `main` → nouvelle image → staging → approbation → prod |
 | Déclenchement limité aux branches protégées | [§7.1](#71-déclenchement-limité-aux-branches-protégées) | `main` protégée, variables protégées, rôles AWS liés à `main`, test automatique |
 | Secrets hors du code | [§7.2](#72-secrets-hors-du-code) | Ansible Vault, variables masquées, OIDC, secrets créés dans le cluster |
-| Moindre privilège | [§7.3](#73-moindre-privilège) | Un rôle AWS par projet qui en a besoin, limite de permissions, Pod Security, quotas, rôles GitLab |
+| Moindre privilège | [§7.3](#73-moindre-privilège) | Un rôle AWS par projet qui en a besoin, limite de permissions, un Role Kubernetes par application, Pod Security, quotas, rôles GitLab |
 | Mises à jour régulières et automatisées | [§7.4](#74-mises-à-jour-et-alertes-de-sécurité) | Renovate chaque jour ouvré, Trivy, scan ECR, correctifs Ubuntu automatiques, versions figées |
 | README complet | ce fichier | + [REVISION-AUDIT.md](REVISION-AUDIT.md) |
 | Bonus | [§9](#9-choix-techniques-et-alternatives) | Mon propre crud-master, OIDC sans clé, Renovate, tests de protection et de coupure |
@@ -392,6 +392,7 @@ verrou de l'état Terraform. Si la suppression s'interrompt :
 | `test-api.sh staging\|prod` | Scénario de bout en bout par l'URL publique : 16 contrôles |
 | `zero-downtime-test.sh staging\|prod api-gateway\|inventory-app [rollout\|drain]` | Requêtes en continu pendant une mise à jour progressive (`rollout`) ou la vidange d'un nœud (`drain`, nœud remis en service à la fin) ; compte les erreurs |
 | `protection-test.sh [application]` | Agit comme `developer` et vérifie qu'il ne peut ni déployer ni toucher à `main` |
+| `rbac-test.sh staging\|prod` | Vérifie que le pipeline de chaque application ne peut modifier dans Kubernetes que ses propres objets : 118 contrôles (`kubectl auth can-i` au nom de son groupe, déploiement à blanc) |
 | `inventory.sh` | Inventaire des ressources payantes dans les 17 régions (machines, disques, IP, NAT, répartiteurs ALB/NLB et classiques, EKS, RDS, Lambda, groupes de journaux) |
 
 Et dans le dépôt `infra` : `scripts/deploy-platform.sh`, `scripts/remove-platform.sh`, `scripts/build-images.sh`,
@@ -528,7 +529,7 @@ avant chaque push, tout l'historique, avec un contrôle positif pour prouver que
 | Rôle | Droits |
 |---|---|
 | `code-keeper-ci-infra` | Services de l'environnement, **à Paris seulement** ; IAM limité aux rôles `code-keeper-staging-*`/`prod-*`, qui doivent porter la limite ci-dessous ; états `envs/*` ; images de plateforme |
-| `code-keeper-ci-<application>` | Pousser **sa** seule image ; trouver les clusters ; dans Kubernetes, droits d'édition limités à l'espace `code-keeper` |
+| `code-keeper-ci-<application>` | Pousser **sa** seule image ; trouver les clusters ; dans Kubernetes, **ses** seuls objets (groupe `code-keeper-deploy-<application>`, aucune politique d'accès EKS) |
 
 - **Limite de permissions** (`code-keeper-environment-boundary`) : tout rôle créé par le pipeline ne peut jamais
   dépasser les droits d'un cluster (EC2, EKS, ELB, journaux, lecture ECR). Le rôle `infra` ne peut ni retirer cette
@@ -541,6 +542,10 @@ avant chaque push, tout l'historique, avec un contrôle positif pour prouver que
   métadonnées (IMDSv2, limite de saut 1).
 
 **Kubernetes** :
+- **Un Role par application** (`platform/rbac.yaml` du dépôt `infra`) : son pipeline crée et met à jour **ses**
+  objets (Service, Deployment ou StatefulSet, autoscaler, PodDisruptionBudget), suit le déploiement et lit les pods ;
+  il ne peut ni lire les secrets, ni toucher aux bases, à RabbitMQ ou à une autre application, ni rien supprimer
+  (`Scripts/rbac-test.sh staging|prod`).
 - **Pod Security `restricted`** sur l'espace `code-keeper` : un pod privilégié ou avec accès à la machine est refusé
   (vérifié : *« violates PodSecurity "restricted:v1.36" »*).
 - **Quota** : aucun service `LoadBalancer` (un load balancer créé par Kubernetes serait payant et hors de Terraform).
@@ -585,7 +590,7 @@ des variables à un pipeline.
 | Fonctionnement | `Scripts/test-api.sh staging` puis `prod` : 16/16 ; `Scripts/zero-downtime-test.sh staging api-gateway` (puis `… drain`) : 0 erreur |
 | Branches protégées | `Scripts/protection-test.sh` : 7 contrôles sur 7 ; ce que `developer` ne doit pas faire est refusé, sa branche de travail est acceptée et son pipeline (sans déploiement) passe |
 | Secrets hors du code | `git grep` sans résultat ; `ansible-vault view` ; variables masquées ; OIDC (aucune clé) |
-| Moindre privilège | Rôles IAM et leur politique de confiance ; limite de permissions ; Pod Security ; quota |
+| Moindre privilège | Rôles IAM et leur politique de confiance ; limite de permissions ; `Scripts/rbac-test.sh staging` (droits Kubernetes de chaque pipeline d'application) ; Pod Security ; quota |
 | Mises à jour | Projet `renovate` : programmation, demandes de fusion, tableaux de bord ; Trivy et SAST dans les pipelines |
 
 ---
@@ -641,6 +646,9 @@ des variables à un pipeline.
   couperait alors l'application le temps de la relancer ailleurs.
 - Une seule instance GitLab (pas de haute disponibilité) et une seule machine runner (2 runners) : les pipelines attendent un emplacement
   libre (2 jobs à la fois).
+- RBAC ne peut pas limiter une création à un nom : le pipeline d'une application peut créer d'autres objets de ses
+  types dans l'espace `code-keeper` (sans modifier ni supprimer ceux des autres), et les pods d'un tel objet
+  pourraient lire les secrets de l'espace. Seul le code relu de `main` peut prendre ce rôle (OIDC).
 - L'approbation de production repose sur le droit de fusionner dans `main` : les environnements protégés (liste
   nominative d'approbateurs) sont réservés à GitLab Premium.
 - Le navigateur avertit sur le certificat de GitLab (CA du projet) tant que `ca.crt` n'y est pas importé.

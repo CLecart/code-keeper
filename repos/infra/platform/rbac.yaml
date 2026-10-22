@@ -1,0 +1,172 @@
+# Kubernetes rights of the application pipelines (deploy-staging and
+# deploy-production jobs of inventory-app, billing-app and api-gateway-app).
+#
+# EKS gives the CI role of each application (code-keeper-ci-<application>) no
+# access policy, only the group code-keeper-deploy-<application>
+# (terraform/modules/environment/eks.tf). Each group is bound below to a Role
+# that allows what its deploy job runs, on the objects of its own k8s/
+# manifests:
+#
+#   kubectl apply -k        GET, then CREATE (first deployment) or PATCH
+#   kubectl rollout status  GET, then LIST and WATCH filtered on the name
+#   kubectl get pods -l     LIST of the pods (read only)
+#
+# RBAC authorizes a creation before the object exists, so it cannot limit it
+# to a name: an application may create objects of its own kinds. Every other
+# verb is limited to its own names. Nothing else: no access to the Secrets, no
+# change to the databases, RabbitMQ, another application, the quota or the
+# network policies, no deletion, no Role or RoleBinding. Scripts/rbac-test.sh
+# (code-keeper repository) checks it against the cluster.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deploy-inventory-app
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["inventory-app"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create"]
+  # list and watch: kubectl rollout status, which filters on the name
+  # (field selector metadata.name), the only form resourceNames accepts.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["inventory-app"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["create"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    resourceNames: ["inventory-app"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["create"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    resourceNames: ["inventory-app"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deploy-inventory-app
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+subjects:
+  - kind: Group
+    name: code-keeper-deploy-inventory-app
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: deploy-inventory-app
+  apiGroup: rbac.authorization.k8s.io
+---
+# billing-app: a StatefulSet and its headless Service, no autoscaler and no
+# disruption budget.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deploy-billing-app
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["billing-app"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    resourceNames: ["billing-app"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deploy-billing-app
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+subjects:
+  - kind: Group
+    name: code-keeper-deploy-billing-app
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: deploy-billing-app
+  apiGroup: rbac.authorization.k8s.io
+---
+# api-gateway-app: its objects are named api-gateway.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deploy-api-gateway-app
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["api-gateway"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["api-gateway"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["create"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    resourceNames: ["api-gateway"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["create"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    resourceNames: ["api-gateway"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deploy-api-gateway-app
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+subjects:
+  - kind: Group
+    name: code-keeper-deploy-api-gateway-app
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: deploy-api-gateway-app
+  apiGroup: rbac.authorization.k8s.io

@@ -11,7 +11,8 @@
 #
 # AWS access: each job of main exchanges its ID token for the role of this
 # project (OIDC, code-keeper-ci-<application>): push of its own image only, and
-# edit rights in the code-keeper namespace of the clusters (EKS access entry).
+# in the clusters, changes to its own objects only (Kubernetes group
+# code-keeper-deploy-<application>, platform/rbac.yaml of the infra repository).
 #
 # The pipelines of the three applications are identical except for the two
 # variables below.

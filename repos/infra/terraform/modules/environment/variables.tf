@@ -42,15 +42,9 @@ variable "admin_principal_arns" {
 }
 
 variable "applications" {
-  description = "Applications deployed by their own pipeline; their CI role may edit the application namespace only."
+  description = "Applications deployed by their own pipeline; their CI role joins the Kubernetes group <project>-deploy-<application> (rights: platform/rbac.yaml)."
   type        = list(string)
   default     = ["api-gateway-app", "inventory-app", "billing-app"]
-}
-
-variable "app_namespace" {
-  description = "Kubernetes namespace of the application and of its databases."
-  type        = string
-  default     = "code-keeper"
 }
 
 variable "kubernetes_version" {

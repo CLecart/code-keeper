@@ -316,7 +316,8 @@ data "aws_iam_policy_document" "ci_application" {
   }
 
   # What the deployment may do inside Kubernetes is set by the EKS access entry
-  # of each environment (infra repository), limited to the application namespace.
+  # of each environment (infra repository): the Kubernetes group
+  # code-keeper-deploy-<application>, whose Role covers its own objects only.
   statement {
     sid       = "FindTheClusters"
     actions   = ["eks:DescribeCluster"]
