@@ -107,7 +107,11 @@ for _ in $(seq 1 90); do
   case "$status" in success | failed | canceled | skipped) break ;; esac
   sleep 10
 done
-check "7. the branch pipeline passes (status $status)" "$status" success
+if [[ "$status" == success ]]; then
+  echo "  PASS  7. the branch pipeline passes (pipeline $pipeline: success)"
+else
+  echo "  FAIL  7. the branch pipeline did not pass (pipeline $pipeline: ${status:-no status})"; failed=$((failed + 1))
+fi
 
 echo
 if [[ "$failed" -eq 0 ]]; then echo "All protection checks passed"; else echo "$failed protection check(s) failed"; exit 1; fi
