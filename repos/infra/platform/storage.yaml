@@ -5,7 +5,7 @@
 # volume on demand. WaitForFirstConsumer creates the volume only once the pod
 # is scheduled, in the same Availability Zone as its node (EBS volumes are zonal).
 #
-# reclaimPolicy Delete: deleting a claim deletes its volume, so scripts/destroy-environment.sh
+# reclaimPolicy Delete: deleting a claim deletes its volume, so scripts/remove-platform.sh
 # can remove every volume before `terraform destroy` (the cluster deletion alone
 # would leave them behind, still billed).
 apiVersion: storage.k8s.io/v1

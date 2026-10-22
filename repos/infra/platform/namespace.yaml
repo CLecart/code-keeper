@@ -1,8 +1,16 @@
 # Namespace of the whole application: deleting it removes every workload and
-# every volume claim at once (scripts/destroy-environment.sh).
+# every volume claim at once (scripts/remove-platform.sh).
 apiVersion: v1
 kind: Namespace
 metadata:
   name: code-keeper
   labels:
     app.kubernetes.io/part-of: code-keeper
+    # Pod Security admission: every pod of the namespace must follow the
+    # "restricted" profile (non-root, no privilege escalation, all capabilities
+    # dropped, seccomp, no host access). The application pipelines may edit this
+    # namespace: they cannot start a privileged pod to escape from it.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
