@@ -1,3 +1,7 @@
 # Copy to terraform.tfvars (ignored by Git) and put your public IP:
 #   curl -s https://checkip.amazonaws.com
 admin_cidrs = ["203.0.113.7/32"]
+
+# Other team members: GitLab web and Git over HTTPS only (no SSH), e.g.
+# ["198.51.100.20/32"]. Their accounts are in ansible/group_vars/all/main.yml.
+team_cidrs = []

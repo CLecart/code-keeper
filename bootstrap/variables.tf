@@ -20,6 +20,17 @@ variable "admin_cidrs" {
   }
 }
 
+variable "team_cidrs" {
+  description = "Public IP ranges of the other team members: GitLab web and Git over HTTPS only, never SSH."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = !contains(var.team_cidrs, "0.0.0.0/0") && length(setintersection(var.team_cidrs, var.admin_cidrs)) == 0
+    error_message = "Never 0.0.0.0/0, and a range already in admin_cidrs must not be listed again."
+  }
+}
+
 variable "ssh_public_key_path" {
   description = "Public key installed on both machines; Ansible connects with the matching private key."
   type        = string

@@ -24,6 +24,10 @@ locals {
     for pair in setproduct(keys(local.gitlab_admin_ports), var.admin_cidrs) :
     "${pair[0]}-${pair[1]}" => { port = local.gitlab_admin_ports[pair[0]], cidr = pair[1] }
   }
+  team_rules = {
+    for pair in setproduct(["http", "https"], var.team_cidrs) :
+    "${pair[0]}-${pair[1]}" => { port = local.gitlab_admin_ports[pair[0]], cidr = pair[1] }
+  }
 }
 
 resource "aws_vpc_security_group_ingress_rule" "gitlab_admin" {
@@ -31,6 +35,19 @@ resource "aws_vpc_security_group_ingress_rule" "gitlab_admin" {
 
   security_group_id = aws_security_group.gitlab.id
   description       = "Admin ${each.key}"
+  ip_protocol       = "tcp"
+  from_port         = each.value.port
+  to_port           = each.value.port
+  cidr_ipv4         = each.value.cidr
+}
+
+# The other team members (developer, stakeholder...) only need the web interface
+# and Git over HTTPS: no SSH to the machines.
+resource "aws_vpc_security_group_ingress_rule" "gitlab_team" {
+  for_each = local.team_rules
+
+  security_group_id = aws_security_group.gitlab.id
+  description       = "Team ${each.key}"
   ip_protocol       = "tcp"
   from_port         = each.value.port
   to_port           = each.value.port
