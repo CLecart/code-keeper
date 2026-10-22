@@ -93,6 +93,25 @@ test:
       junit: junit.xml
     expire_in: 1 week
 
+# Integration tests: the application against a real PostgreSQL 17 and RabbitMQ 4
+# (GitLab services, the versions of the platform images), with throwaway
+# credentials unique to the job. No AWS access.
+integration-test:
+  stage: test
+  image: public.ecr.aws/docker/library/node:24-alpine
+  services:
+    - name: public.ecr.aws/docker/library/postgres:17-alpine3.23
+      alias: postgres
+    - name: public.ecr.aws/docker/library/rabbitmq:4.2-alpine
+      alias: rabbitmq
+  variables:
+    POSTGRES_PASSWORD: "ci-$CI_PIPELINE_ID-$CI_JOB_ID"
+    RABBITMQ_DEFAULT_USER: ci
+    RABBITMQ_DEFAULT_PASS: "ci-$CI_PIPELINE_ID-$CI_JOB_ID"
+  script:
+    - npm ci
+    - npm run test:integration
+
 semgrep-sast:
   stage: scan
 
@@ -126,6 +145,15 @@ dockerfile-lint:
   image: ghcr.io/hadolint/hadolint:v2.15.1-alpine
   script:
     - hadolint Dockerfile
+
+# Coding issues of the JavaScript source: the ESLint recommended rules, with
+# the versions pinned in package.json (devDependencies).
+lint:
+  stage: scan
+  image: public.ecr.aws/docker/library/node:24-alpine
+  script:
+    - npm ci
+    - npm run lint
 
 # ---- containerization (main only) -----------------------------------------------
 

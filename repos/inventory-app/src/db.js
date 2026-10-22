@@ -26,7 +26,7 @@ export async function waitForDatabase(pool, { logger, attempts = 30, delayMs = 2
       return;
     } catch (err) {
       if (attempt === attempts) {
-        throw new Error(`Database unreachable after ${attempts} attempts: ${err.message}`);
+        throw new Error(`Database unreachable after ${attempts} attempts: ${err.message}`, { cause: err });
       }
       logger.warn('Database not ready, retrying', { attempt, attempts, delayMs, err });
       await sleep(delayMs);

@@ -10,6 +10,9 @@ Microservice d'inventaire du projet code-keeper : une API REST de films, stocké
 | Tests | `npm ci && npm test` (test runner intégré de Node) |
 | Image | `code-keeper/inventory-app` dans Amazon ECR |
 
+La CI lance aussi `lint` (règles recommandées d'ESLint, `npm run lint`) et `integration-test` (`npm run test:integration`) : l'application réelle, démarrée par `src/index.js`, est testée en HTTP (CRUD des films) contre une vraie PostgreSQL 17, service jetable du job.
+En local, `TEST_POSTGRES_HOST` et `TEST_POSTGRES_PORT` désignent le serveur PostgreSQL à utiliser, et `POSTGRES_PASSWORD` le mot de passe de son utilisateur `postgres`.
+
 ## Configuration (variables d'environnement)
 
 | Variable | Défaut | Rôle |
