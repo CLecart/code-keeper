@@ -2,7 +2,7 @@
 
 **Auteur :** `clecart` — **Région :** `eu-west-3` (Paris) — **Pile :** GitLab CE 19.5.1 · GitLab Runner 19.5.0 ·
 Ansible 2.21.5 · Terraform 1.16.6 (fournisseur AWS 6.69.1, modules VPC 6.7.3 et EKS 21.29.0) · Amazon EKS 1.36 ·
-Trivy 0.76.1 · Renovate 44.176.2 · Node.js 24
+Trivy 0.76.1 · TFLint 0.64.0 · Renovate 44.176.2 · Node.js 24 · ESLint 10.12.0
 
 Ce document est à la fois le **compte-rendu** du projet et sa **documentation complète** : architecture, coûts,
 prérequis, installation, utilisation, pipelines, sécurité, scénario d'audit, choix techniques et dépannage. Les
@@ -79,7 +79,7 @@ une **chaîne complète** qui scanne et déploie une application en microservice
 | Créer, modifier, supprimer l'infrastructure | Pipeline `infra` : Init → Validate → Plan → Apply staging → **Approbation** → Apply production |
 | Construire, tester, scanner | Pipeline CI de chaque application : Build → Test → Scan → Image Docker (ECR) |
 | Livrer | Pipeline CD de chaque application : Staging → **Approbation** → Production, **sans coupure** (limites : [§11](#11-limites-connues)) |
-| Sécurité | Branches protégées, aucun secret dans le code, moindre privilège (OIDC), mises à jour automatiques (Renovate) |
+| Sécurité | Branches protégées, aucun secret dans le code, moindre privilège (OIDC, un Role Kubernetes par application), mises à jour automatiques (Renovate) |
 
 L'application elle-même est celle de cloud-design : une API de films (`inventory-app` + PostgreSQL), un service de
 facturation (`billing-app` + PostgreSQL) alimenté par une file **RabbitMQ**, et une passerelle (`api-gateway-app`)
@@ -137,7 +137,7 @@ flowchart LR
 
 | Événement | Ce qui tourne |
 |---|---|
-| Push ou demande de fusion sur une branche de travail | CI seulement, sans aucun accès AWS : build, test, scan (applications) ; `validate`, plus `init` sur une demande de fusion (`infra`) ; validation de la configuration (`renovate`) |
+| Push ou demande de fusion sur une branche de travail | CI seulement, sans aucun accès AWS : build, tests unitaires et d'intégration, scan et lint (applications) ; l'étape `validate` (`validate`, `tflint`, `iac-scan`), plus `init` sur une demande de fusion (`infra`) ; validation de la configuration (`renovate`) |
 | Push sur `main` (protégée) | CI, image, déploiement en staging, puis **attente d'un Maintainer** pour la production |
 | Pipeline `infra` lancé à la main avec `DESTROY=true` (Maintainers seulement) | Suppression de staging, puis de la prod après approbation |
 | Programmation du projet `renovate` (chaque jour ouvré à 7 h) | Demandes de fusion de mises à jour de dépendances |
@@ -151,8 +151,8 @@ flowchart LR
 | Runners intégrés aux pipelines | [ansible/roles/gitlab_runner/](ansible/roles/gitlab_runner/) | 2 runners Docker enregistrés par l'API, en ligne, utilisés par tous les projets |
 | Un dépôt par application, un dépôt d'infrastructure indépendant | [repos/](repos/) | `inventory-app`, `billing-app`, `api-gateway-app`, `infra` (+ `renovate`) |
 | Infrastructure de cloud-design sur 2 environnements similaires, avec Terraform | [repos/infra/terraform/](repos/infra/terraform/) | Un module, deux appels : seuls le nom et le réseau diffèrent |
-| Étapes Init, Validate, Plan, Apply staging, Approval, Apply production | [repos/infra/.gitlab-ci.yml](repos/infra/.gitlab-ci.yml) | Même ordre ; `DESTROY=true` pour supprimer (vérifié : pipeline n° 36, 91 ressources détruites par environnement) |
-| CI : Build, Test, Scan, Containerization | [repos/inventory-app/.gitlab-ci.yml](repos/inventory-app/.gitlab-ci.yml) | npm ci, tests Node, SAST GitLab + Trivy + hadolint, image scannée poussée dans ECR |
+| Étapes Init, Validate, Plan, Apply staging, Approval, Apply production | [repos/infra/.gitlab-ci.yml](repos/infra/.gitlab-ci.yml) | Même ordre ; Validate : `terraform fmt` et `validate`, TFLint, analyse de sécurité Trivy (`iac-scan`) ; `DESTROY=true` pour supprimer (vérifié : pipeline n° 36, 91 ressources détruites par environnement) |
+| CI : Build, Test, Scan, Containerization | [repos/inventory-app/.gitlab-ci.yml](repos/inventory-app/.gitlab-ci.yml) | npm ci, tests unitaires et d'intégration (vrais PostgreSQL et RabbitMQ), SAST GitLab + Trivy + hadolint + ESLint ; image construite seulement si tout est vert, scannée, poussée dans ECR |
 | CD : Deploy staging, Approval, Deploy production sans coupure | même fichier ; manifestes `k8s/` de chaque application | Mise à jour progressive (`maxUnavailable: 0`), vérifiée sans aucune erreur, de même que la vidange d'un nœud ([§6.3](#63-déploiement-sans-coupure)) |
 | Toute modification du code redéployée en staging puis en prod après approbation | idem | Push sur `main` → nouvelle image → staging → approbation → prod |
 | Déclenchement limité aux branches protégées | [§7.1](#71-déclenchement-limité-aux-branches-protégées) | `main` protégée, variables protégées, rôles AWS liés à `main`, test automatique |
@@ -160,7 +160,7 @@ flowchart LR
 | Moindre privilège | [§7.3](#73-moindre-privilège) | Un rôle AWS par projet qui en a besoin, limite de permissions, un Role Kubernetes par application, Pod Security, quotas, rôles GitLab |
 | Mises à jour régulières et automatisées | [§7.4](#74-mises-à-jour-et-alertes-de-sécurité) | Renovate chaque jour ouvré, Trivy, scan ECR, correctifs Ubuntu automatiques, versions figées |
 | README complet | ce fichier | + [REVISION-AUDIT.md](REVISION-AUDIT.md) |
-| Bonus | [§9](#9-choix-techniques-et-alternatives) | Mon propre crud-master, OIDC sans clé, Renovate, tests de protection et de coupure |
+| Bonus | [§9](#9-choix-techniques-et-alternatives) | Mon propre crud-master, analyse de sécurité de la configuration Terraform (Trivy, à la place de tfsec) et TFLint, OIDC sans clé, Renovate, tests de protection, de coupure et des droits Kubernetes |
 
 ---
 
@@ -186,8 +186,8 @@ flowchart LR
 | Ansible (ansible-core) | 2.21.5 (+ collection `community.crypto` 3.5.1) | Installation et configuration de GitLab et des runners |
 | AWS CLI | 2.38.2 | Scripts, vérifications |
 | kubectl / Helm | 1.36.4 / 4.3.1 | Vérifications et démonstrations |
-| Docker | 29.9 | shellcheck, hadolint, validateur Renovate en local |
-| jq, git (avec `git subtree`), ssh | — | Scripts |
+| Docker | 29.9 | shellcheck, hadolint, TFLint, Trivy, validateur Renovate en local |
+| jq, git, rsync, ssh | — | Scripts |
 
 ### 1.3 Accès
 
@@ -271,8 +271,13 @@ code-keeper/
 └── Scripts/                   Outils d'administration (voir §5.1)
 ```
 
-Les 5 dépôts GitLab vivent dans `repos/` : `Scripts/repos.sh push` les publie avec `git subtree` (l'historique
-est gardé), `Scripts/repos.sh pull` ramène ce qui a été fusionné dans GitLab (par exemple une mise à jour Renovate).
+Les 5 dépôts GitLab vivent dans `repos/`. `Scripts/repos.sh` synchronise leur **contenu**, pas leur historique :
+`push` remplace les fichiers de `main` par ceux commités dans `repos/<dépôt>`, en un seul commit qui liste les
+changements publiés ; `pull` ramène dans `repos/<dépôt>` ce qui a été fusionné dans GitLab (par exemple une mise à
+jour Renovate) et le commite ici. `push` refuse quand `main` contient une version que ce dépôt n'a jamais eue : il
+faut d'abord la ramener par `pull`, sinon elle serait annulée. Pourquoi : avec `git subtree`, une demande de fusion
+fusionnée dans GitLab ne pouvait plus être ramenée (historiques sans lien, [§10](#10-dépannage--problèmes-rencontrés))
+et le `push` suivant aurait été refusé.
 
 ---
 
@@ -333,8 +338,9 @@ applications se publient après `infra` : leur déploiement a besoin du cluster 
 ### 4.4 Les environnements (pipeline `infra`)
 
 Le premier push de `infra` crée staging (≈ 16 min avec la plateforme), puis attend l'approbation ; la prod suit en
-≈ 13 min. Durées mesurées (pipeline n° 5) : images 1 min 41, init 28 s, validate 26 s, plans 39 s, apply staging
-9 min 48, plateforme staging 1 min 33, apply production 11 min 20, plateforme production 1 min 42.
+≈ 13 min. Durées mesurées (pipeline n° 5, avant l'ajout de `tflint` et `iac-scan`) : images 1 min 41, init 28 s,
+validate 26 s, plans 39 s, apply staging 9 min 48, plateforme staging 1 min 33, apply production 11 min 20,
+plateforme production 1 min 42.
 
 La suppression (`DESTROY=true`, pipeline n° 36) prend ≈ 14 min pour staging (init 21 s, validate 26 s, plans 45 s,
 `remove-platform` 54 s, `destroy` 11 min 13 s), puis ≈ 12 min pour la prod après l'approbation (`remove-platform`
@@ -345,8 +351,8 @@ VPC, ALB, API Gateway, groupe Cognito, groupe de journaux, disque ou rôle IAM d
 ### 4.5 Les applications
 
 Le premier push de chaque application construit son image et la déploie en staging (≈ 2 min 30), puis en prod
-après approbation (14 s). Mesures (pipeline n° 6 d'inventory-app) : build 10 s, test 5 s, SAST 32 s, Trivy 34 s,
-hadolint 4 s, image 34 s, staging 14 s, production 14 s.
+après approbation (14 s). Mesures (pipeline n° 6 d'inventory-app, avant l'ajout de `integration-test` et `lint`) :
+build 10 s, test 5 s, SAST 32 s, Trivy 34 s, hadolint 4 s, image 34 s, staging 14 s, production 14 s.
 
 ### 4.6 La fin de séance
 
@@ -376,6 +382,10 @@ verrou de l'état Terraform. Si la suppression s'interrompt :
 4. `Scripts/test-api.sh staging` puis `prod` : l'utilisateur de test Cognito est recréé automatiquement (les bases
    repartent vides).
 
+Procédure répétée de bout en bout le 22 octobre, après une fin de séance complète : pipeline `infra` n° 38 (staging
+prêt à 14 h 36, prod à 14 h 55 après approbation), pipelines n° 40 à 42 des applications, puis `Scripts/test-api.sh` :
+16/16 en staging et 9/9 en prod (`--skip-stop` : sans arrêter `billing-app`).
+
 ---
 
 ## 5. Utilisation
@@ -386,13 +396,13 @@ verrou de l'état Terraform. Si la suppression s'interrompt :
 |---|---|
 | `init-secrets.sh` | Crée le mot de passe Ansible Vault et le coffre chiffré (secrets aléatoires, jamais affichés) |
 | `make-hosts.sh` | Écrit l'inventaire Ansible à partir des sorties de `bootstrap/` |
-| `repos.sh push\|pull [dépôt…]` | Publie les dossiers `repos/` dans GitLab, ou ramène les changements fusionnés dans GitLab |
+| `repos.sh push\|pull [dépôt…]` | Synchronise le contenu, pas l'historique : `push` publie sur `main` les fichiers commités de `repos/<dépôt>`, en un commit qui liste les changements publiés, et refuse si `main` contient une version jamais ramenée ici ; `pull` copie `main` dans `repos/<dépôt>` et le commite |
 | `tooling.sh start\|stop\|status` | Allume, éteint ou montre les machines GitLab et runner |
 | `api-token.sh staging\|prod` | Jeton Cognito d'un utilisateur de test (`auditor`) pour l'API publique |
 | `test-api.sh staging\|prod` | Scénario de bout en bout par l'URL publique : 16 contrôles |
-| `zero-downtime-test.sh staging\|prod api-gateway\|inventory-app [rollout\|drain]` | Requêtes en continu pendant une mise à jour progressive (`rollout`) ou la vidange d'un nœud (`drain`, nœud remis en service à la fin) ; compte les erreurs |
-| `protection-test.sh [application]` | Agit comme `developer` et vérifie qu'il ne peut ni déployer, ni approuver la prod, ni toucher à `main`, ni créer de projet |
-| `rbac-test.sh staging\|prod` | Vérifie que le pipeline de chaque application ne peut modifier dans Kubernetes que ses propres objets : 118 contrôles (`kubectl auth can-i` au nom de son groupe, déploiement à blanc) |
+| `zero-downtime-test.sh staging\|prod api-gateway\|inventory-app [rollout\|drain\|watch [secondes]]` | Requêtes en continu pendant une mise à jour progressive (`rollout`), la vidange d'un nœud (`drain`, nœud remis en service à la fin) ou un déploiement fait par le pipeline lui-même (`watch`, 180 s par défaut : par exemple, approuver la prod pendant ce temps ; image affichée avant et après) ; compte les erreurs et donne l'heure des requêtes en échec |
+| `protection-test.sh [application]` | Agit comme `developer` et vérifie qu'il ne peut ni déployer, ni approuver la prod, ni toucher à `main`, ni créer de projet : 9 contrôles ([§7.1](#71-déclenchement-limité-aux-branches-protégées)) |
+| `rbac-test.sh staging\|prod` | Vérifie que le pipeline de chaque application ne peut modifier dans Kubernetes que ses propres objets : 118 contrôles (entrée d'accès EKS, `kubectl auth can-i` au nom de son groupe, déploiement à blanc), sans rien modifier |
 | `inventory.sh` | Inventaire des ressources payantes dans les 17 régions (machines, disques, IP, NAT, répartiteurs ALB/NLB et classiques, EKS, RDS, Lambda, groupes de journaux) |
 
 Et dans le dépôt `infra` : `scripts/deploy-platform.sh`, `scripts/remove-platform.sh`, `scripts/build-images.sh`,
@@ -403,7 +413,9 @@ Et dans le dépôt `infra` : `scripts/deploy-platform.sh`, `scripts/remove-platf
 Chaque pipeline de `main` (applications et `infra`) s'arrête sur le job manuel **approve-production**. Pour le lancer, il faut le droit de
 fusionner dans `main` (documentation GitLab : *« To run a manual job, you must have permission to merge to the
 assigned branch »*) : seuls les **Maintainers** et plus (`stakeholder`, Maintainer ; `clecart`, Owner) le peuvent, pas `developer`. GitLab garde
-la trace de qui a approuvé et quand.
+la trace de qui a approuvé et quand. Le 22 octobre, le compte `stakeholder` a approuvé la prod du pipeline `infra`
+n° 44 et des pipelines d'applications n° 47, 48 et 49, puis la suppression n° 64 (journal des jobs
+`approve-production`).
 
 ### 5.3 Une modification de code, de bout en bout
 
@@ -411,6 +423,7 @@ la trace de qui a approuvé et quand.
 2. Un Maintainer fusionne (seulement si le pipeline est vert et les discussions résolues).
 3. Le pipeline de `main` construit la nouvelle image (étiquette = commit), la scanne, la pousse dans ECR, la déploie
    en staging, puis attend l'approbation ; la même image part en production.
+4. `Scripts/repos.sh pull <dépôt>` ramène la fusion dans ce dépôt ; sans cela, le `push` suivant est refusé.
 
 ### 5.4 Les mises à jour
 
@@ -429,6 +442,8 @@ la trace de qui a approuvé et quand.
 | images | `build-platform-images` | Construit, scanne (Trivy) et pousse les images des bases et de RabbitMQ absentes d'ECR (runner « builder ») |
 | init | `init-backend` | `terraform init` des 2 environnements avec le stockage d'état S3 (verrou `use_lockfile`) |
 | validate | `validate` | `terraform fmt -check` et `terraform validate` des 2 environnements |
+| validate | `tflint` | Bonnes pratiques Terraform (TFLint 0.64.0, `.tflint.hcl`) : jeu de règles `terraform` intégré à TFLint, préréglage `recommended`, aucun greffon téléchargé |
+| validate | `iac-scan` | Analyse de sécurité de la configuration Terraform (Trivy `config`), modules du registre compris : échoue sur un défaut haut ou critique ; `.trivyignore.yaml` accepte 4 exceptions justifiées, chacune limitée au fichier où Trivy la signale ([§11](#11-limites-connues)) |
 | plan | `plan-staging`, `plan-production` | Plans enregistrés (artefacts 1 jour) ; avec `DESTROY=true`, plans de suppression |
 | apply-staging | `apply-staging` → `deploy-platform-staging` | Applique **exactement** le plan relu ; puis bases, RabbitMQ, quotas, Pod Security, Prometheus, Grafana, Fluent Bit, autoscaler |
 | approval | `approve-production` | Job manuel, réservé aux Maintainers |
@@ -437,22 +452,36 @@ la trace de qui a approuvé et quand.
 Suppression (`DESTROY=true`) : `remove-platform-*` supprime d'abord l'espace `code-keeper` et attend la disparition
 de ses disques EBS (identifiés un par un), puis `destroy-*` recalcule le plan de suppression et l'applique (un
 « Retry » fonctionne donc après une interruption, voir [§4.6](#46-la-fin-de-séance)). Sur une demande de
-fusion, seuls `init` (sans état) et `validate` tournent, et sur un push d'une autre branche, `validate` seul : sans
-aucun accès AWS.
+fusion, seuls `init` (sans état) et l'étape `validate` tournent, et sur un push d'une autre branche, l'étape
+`validate` seule : sans aucun accès AWS.
+
+L'étape `validate` tourne dans tous les pipelines, suppression comprise, et les plans attendent ses 3 jobs. Trivy
+applique les règles intégrées à sa version figée (`--skip-check-update`) : un commit donne le même résultat dans tous
+les pipelines, et la ligne `Falling back to embedded checks` de son journal est normale. TFLint n'a rien trouvé à
+corriger. Vérifié dans GitLab (pipeline n° 44) : `validate`, `tflint` et `iac-scan` réussis.
 
 ### 6.2 Pipeline des applications
 
 | Étape | Job | Détail |
 |---|---|---|
 | build | `build` | `npm ci` (versions exactes du `package-lock.json`) et vérification de syntaxe de chaque fichier |
-| test | `test` | Tests Node (`node --test`), rapport JUnit affiché dans GitLab : 40, 39 et 22 tests |
+| test | `test` | Tests unitaires (`node --test`), rapport JUnit affiché dans GitLab : 40, 39 et 22 tests |
+| test | `integration-test` | L'application réelle (`src/index.js`) contre de vrais PostgreSQL 17 et RabbitMQ 4.2 (services GitLab), avec des identifiants jetables propres au job : 9, 4 et 3 tests (`integration/*.int.js`) |
 | scan | `semgrep-sast` + `sast-gate` | SAST de GitLab (Semgrep) ; `sast-gate` échoue sur une faille haute ou critique |
 | scan | `dependency-scan` | Trivy sur les dépendances et les secrets : échoue sur une faille haute ou critique corrigée |
 | scan | `dockerfile-lint` | hadolint sur le Dockerfile |
-| containerization | `containerization` | `main` seulement : image construite, scannée par Trivy, poussée dans ECR (étiquette = commit, jamais réécrite) |
+| scan | `lint` | ESLint 10 : règles recommandées, versions figées dans les `devDependencies` |
+| containerization | `containerization` | `main` seulement, une fois **tous** les contrôles réussis : image construite, scannée par Trivy, poussée dans ECR (étiquette = commit, jamais réécrite) |
 | deploy-staging | `deploy-staging` | Mise à jour progressive dans staging, attente de la fin du déploiement |
 | approval | `approve-production` | Job manuel, Maintainers |
 | deploy-production | `deploy-production` | La **même image** en production |
+
+Les tests d'intégration démarrent l'application réelle : CRUD des films sur PostgreSQL (inventory-app), commande
+publiée dans la file puis enregistrée par le vrai consommateur (billing-app), commande mise dans la file et requêtes
+`/api/movies` transmises sans changement (api-gateway-app) ; chacun vérifie aussi l'arrêt propre sur `SIGTERM`.
+`containerization` nomme dans ses `needs` tous les contrôles (`test`, `integration-test`, `sast-gate`,
+`dependency-scan`, `dockerfile-lint`, `lint`) : un job à `needs` démarre dès que les jobs nommés réussissent, quoi
+que fassent les autres, donc un contrôle absent de la liste ne bloquerait ni l'image ni le déploiement.
 
 Le scan a servi dès le premier jour : Trivy, lancé avant la mise en place des pipelines, a trouvé une faille
 critique (`proxy-addr`, CVE-2026-90711) et deux hautes (`follow-redirects`) dans les dépendances, corrigées avant le
@@ -476,13 +505,23 @@ premier pipeline des applications.
   2ᵉ copie a été refusée par le budget jusqu'à ce que la 1ʳᵉ soit remplacée) et **109 sur 109** (inventory-app).
   Avant ce changement, avec une seule copie, la même mesure donnait déjà 120/120 et 109/109 : la pause de 10 s
   couvrait le démarrage du remplaçant. Le budget retire cette dépendance au délai.
+- Mesure en **prod**, pendant un vrai déploiement fait par le pipeline (`Scripts/zero-downtime-test.sh prod
+  api-gateway watch 240`, approbation cliquée pendant la mesure) : **740 requêtes sur 740** en HTTP 200 (pipeline
+  n° 47, image `8c26f43b` → `bd2c73f5`, chaque requête horodatée). Un premier essai, sans horodatage, avait donné
+  725 sur 729 (4 requêtes sans réponse en 5 s) ; jamais reproduit ensuite : témoin sans déploiement 483/483,
+  remplacement des pods en prod 75/75, puis ces 740/740.
 
 ### 6.4 Renovate
 
-Le projet `renovate` lance l'image officielle chaque jour ouvré à 7 h. État le 22 octobre : **9 demandes de fusion**
-ouvertes, toutes avec un pipeline vert (Alpine 3.24, `amqplib` 2, `pg`, …), dont une **de sécurité** : `morgan` 1.12.1,
+Le projet `renovate` lance l'image officielle chaque jour ouvré à 7 h. Le 22 octobre au matin, il a ouvert **9 demandes de
+fusion**, toutes avec un pipeline vert (Alpine 3.24, `amqplib` 2, `pg`, …), dont une **de sécurité** : `morgan` 1.12.1,
 qui corrige deux failles de gravité moyenne (CVE-2026-15603, CVE-2026-87859) signalées par la base OSV ; et un ticket
-« Dependency Dashboard » par dépôt. Le compte `renovate-bot` est Developer : il propose, un Maintainer décide.
+« Dependency Dashboard » par dépôt. La demande de sécurité a été fusionnée le jour même (`api-gateway-app!3`) puis
+déployée : le pipeline n° 43 a construit l'image `8c26f43b`, l'a déployée en staging, puis en prod après
+approbation ; `Scripts/repos.sh pull` l'a ramenée dans ce dépôt (commit `7c06f72`). Le même jour à 16 h 11, la
+programmation elle-même (pipeline n° 50, source `schedule`) a lancé un nouveau passage : **9 nouvelles demandes**,
+dont les outils du pipeline (image Terraform 1.17.0, fournisseur AWS 6.70.0, image de Renovate 44.177.0), soit 17
+demandes ouvertes. Le compte `renovate-bot` est Developer : il propose, un Maintainer décide.
 Chaque push ou demande de fusion du projet `renovate` lance `validate-config` (`renovate-config-validator --strict`
 sur `renovate.json` et `default.json`).
 
@@ -500,7 +539,8 @@ sur `renovate.json` et `default.json`).
   d'administration ne peuvent créer ni projet personnel ni groupe (Ansible : `projects_limit` à 0, `can_create_group`
   à faux), et dans le groupe `code-keeper` seuls les Maintainers créent des projets : un Developer n'a donc aucun
   projet à lui où protéger sa propre branche pour atteindre ce runner.
-- Vérifié par `Scripts/protection-test.sh` (le compte `developer`, rôle Developer) :
+- Vérifié par `Scripts/protection-test.sh` (le compte `developer`, rôle Developer) : **9 contrôles sur 9** le
+  22 octobre à 17 h (pipeline de branche n° 65 réussi, avec `integration-test` et `lint`).
 
 | Tentative de `developer` | Résultat |
 |---|---|
@@ -509,8 +549,8 @@ sur `renovate.json` et `default.json`).
 | Relancer un déploiement de production | Refusé (403) |
 | Lire les variables CI | Refusé (403) |
 | Pousser une branche | Permis : son pipeline ne fait que build, test et scan, et il passe |
-| Créer un projet personnel | Refusé (403) : *« You cannot create projects in your personal namespace »* |
-| Lancer `approve-production` d'une application | Refusé (403) ; sans approbation en attente, le contrôle est sauté (`SKIP`), sans échec |
+| Créer un projet personnel (contrôle 8) | Refusé (403), avec le message de la limite *« You cannot create projects in your personal namespace »* |
+| Lancer `approve-production` d'une application (contrôle 9) | Refusé (403) ; sans approbation en attente, le contrôle est sauté (`SKIP`), sans échec |
 
 ### 7.2 Secrets hors du code
 
@@ -549,8 +589,9 @@ avant chaque push, tout l'historique, avec un contrôle positif pour prouver que
 **Kubernetes** :
 - **Un Role par application** (`platform/rbac.yaml` du dépôt `infra`) : son pipeline crée et met à jour **ses**
   objets (Service, Deployment ou StatefulSet, autoscaler, PodDisruptionBudget), suit le déploiement et lit les pods ;
-  il ne peut ni lire les secrets, ni toucher aux bases, à RabbitMQ ou à une autre application, ni rien supprimer
-  (`Scripts/rbac-test.sh staging|prod`).
+  il ne peut ni lire les secrets, ni toucher aux bases, à RabbitMQ ou à une autre application, ni rien supprimer.
+  `Scripts/rbac-test.sh staging|prod` vérifie ces droits dans un cluster, sans rien y modifier : **118 contrôles sur
+  118** en staging et en prod le 22 octobre, après le pipeline `infra` n° 44.
 - **Pod Security `restricted`** sur l'espace `code-keeper` : un pod privilégié ou avec accès à la machine est refusé
   (vérifié : *« violates PodSecurity "restricted:v1.36" »*).
 - **Quota** : aucun service `LoadBalancer` (un load balancer créé par Kubernetes serait payant et hors de Terraform).
@@ -559,7 +600,8 @@ avant chaque push, tout l'historique, avec un contrôle positif pour prouver que
 
 **GitLab** : `developer` et `renovate-bot` sont Developer (branches et demandes de fusion), `stakeholder` est
 Maintainer (approuve la prod), `clecart` Owner ; les jobs n'ont pas de logs publics ; seuls les Maintainers passent
-des variables à un pipeline.
+des variables à un pipeline ; les comptes sans droits d'administration ne créent ni projet personnel ni groupe
+([§7.1](#71-déclenchement-limité-aux-branches-protégées)).
 
 ### 7.4 Mises à jour et alertes de sécurité
 
@@ -569,6 +611,7 @@ des variables à un pipeline.
 | Failles connues des dépendances directes | Renovate (base **OSV**) : demande de fusion étiquetée `security` |
 | Failles des dépendances et des images | **Trivy** à chaque pipeline d'application et sur chaque image de plateforme construite (bloquant) + **scan ECR** à chaque envoi |
 | Code | **SAST** de GitLab à chaque pipeline (bloquant sur haute et critique) |
+| Configuration Terraform | **Trivy** (`iac-scan`) à chaque pipeline `infra` : bloquant sur haute et critique, 4 exceptions justifiées |
 | Système des machines GitLab et runner | Correctifs de sécurité Ubuntu automatiques chaque jour |
 | GitLab, runner, charts, modules | Versions **figées**, relevées volontairement (exemple : GitLab 19.5.0 → 19.5.1, correctif critique) |
 
@@ -586,17 +629,17 @@ des variables à un pipeline.
 | Question de la grille | Démonstration |
 |---|---|
 | Fichiers du dépôt | `tree -L 2` ; ce README ; `ansible/` ; `repos/*/.gitlab-ci.yml` |
-| GitLab déployé par Ansible | `cd ansible && ansible-playbook site.yml --list-tasks` ; relancer `ansible-playbook site.yml` : `changed=0` |
+| GitLab déployé par Ansible | `cd ansible && ansible-playbook site.yml --list-tasks` ; relancer `ansible-playbook site.yml` : `changed=0` (mesuré le 22 octobre : un 1er passage applique ce qui manque, ici la limite des comptes, le 2e donne `changed=0` sur les 3 hôtes) |
 | Services en marche | `ssh -i ~/.ssh/code-keeper ubuntu@<GitLab> systemctl status gitlab-runsvdir` et `sudo gitlab-ctl status` ; `ssh -i ~/.ssh/code-keeper ubuntu@<runner> systemctl status gitlab-runner docker` (commandes exactes : `terraform -chdir=bootstrap output ssh_commands`) |
 | Runners intégrés | GitLab → Admin → CI/CD → Runners : 2 runners en ligne ; leurs jobs dans chaque pipeline |
 | Infrastructure par Terraform, 2 environnements similaires | `diff repos/infra/terraform/envs/staging/main.tf repos/infra/terraform/envs/prod/main.tf` (nom, réseau, état) ; GitLab → `infra` → pipelines |
-| Étapes du pipeline infra | Pipeline `infra` : images → init → validate → plan → apply-staging → approve-production → apply-production ; suppression : pipeline n° 36 (`DESTROY=true`) |
+| Étapes du pipeline infra | Pipeline `infra` : images → init → validate (`validate`, `tflint`, `iac-scan`) → plan → apply-staging → approve-production → apply-production ; suppression : pipeline n° 36 (`DESTROY=true`) |
 | CI et CD des applications | Modifier une app (branche → demande de fusion → fusion) : le pipeline construit, teste, scanne, déploie en staging, attend l'approbation, déploie en prod |
 | Fonctionnement | `Scripts/test-api.sh staging` puis `prod` : 16/16 ; `Scripts/zero-downtime-test.sh staging api-gateway` (puis `… drain`) : 0 erreur |
-| Branches protégées | `Scripts/protection-test.sh` : 9 contrôles ; ce que `developer` ne doit pas faire est refusé (dont créer un projet et approuver la prod), sa branche de travail est acceptée et son pipeline (sans déploiement) passe |
+| Branches protégées | `Scripts/protection-test.sh` : 9 contrôles sur 9 ; ce que `developer` ne doit pas faire est refusé (dont créer un projet et approuver la prod), sa branche de travail est acceptée et son pipeline (sans déploiement) passe |
 | Secrets hors du code | `git grep` sans résultat ; `ansible-vault view` ; variables masquées ; OIDC (aucune clé) |
 | Moindre privilège | Rôles IAM et leur politique de confiance ; limite de permissions ; `Scripts/rbac-test.sh staging` (droits Kubernetes de chaque pipeline d'application) ; Pod Security ; quota |
-| Mises à jour | Projet `renovate` : programmation, demandes de fusion, tableaux de bord ; Trivy et SAST dans les pipelines |
+| Mises à jour | Projet `renovate` : programmation, demandes de fusion, tableaux de bord ; demande de sécurité `morgan` fusionnée et déployée (`api-gateway-app!3`, pipeline n° 43) ; Trivy et SAST dans les pipelines |
 
 ---
 
@@ -609,11 +652,12 @@ des variables à un pipeline.
 | OIDC, un rôle par projet | Aucune clé à voler ; droits liés au projet **et** à la branche | Clés dans des variables masquées : valables jusqu'à rotation |
 | CA du projet pour HTTPS | GitLab reste fermé à Internet | Let's Encrypt : demande d'ouvrir GitLab au monde ; sslip.io partage une limite de 50 certificats/semaine |
 | Trivy + SAST de GitLab | Gratuits, sans compte, sans limite ; couvrent le code et les dépendances | Snyk (100 analyses de code/mois), SonarQube Cloud ; scan de dépendances de GitLab : Ultimate seulement |
+| Trivy `config` (bonus, à la place de tfsec) et TFLint à l'étape `validate` | `terraform validate` ne voit ni les déclarations inutilisées, ni les versions non figées, ni les défauts de sécurité ; Trivy est déjà l'outil des dépendances et des images | tfsec à part : un outil de plus |
 | ECR (registre) | Scan à l'envoi, transfert gratuit vers EKS, pas de certificat à distribuer | Registre GitLab : TLS obligatoire, certificat à faire accepter par chaque nœud |
 | Construction d'images par le socket Docker, runner protégé | Simple et fiable ; réservé au code relu de `main` | Docker-in-Docker (mode privilégié) ; BuildKit sans droits (peut échouer sans réglages) ; Kaniko (abandonné) |
 | Bases et RabbitMQ dans `infra` | Services de plateforme stables : les déploiements des apps ne les redémarrent jamais | Chaque base avec son app : coupure à chaque déploiement |
 | Renovate auto-hébergé | Standard du marché, une demande de fusion testée par mise à jour | Dependabot (GitHub) ; scan de dépendances GitLab (Ultimate) |
-| Mon propre code Node.js (bonus) | Déjà testé (101 tests) et audité avec cloud-design | crud-master-py fourni |
+| Mon propre code Node.js (bonus) | Déjà testé (101 tests unitaires) et audité avec cloud-design | crud-master-py fourni |
 
 ---
 
@@ -633,6 +677,10 @@ des variables à un pipeline.
 | Mettre `associate_public_ip_address = false` | Recréerait les machines (GitLab perdu) | Rendu explicite à `true` (la protection passe par le pare-feu) |
 | GitLab affiche « Critical patch release » | Correctif de sécurité 19.5.1 | Version figée relevée dans Ansible, playbook relancé |
 | Un projet GitLab supprimé reste | Suppression différée : le projet est renommé | 2ᵉ appel avec `permanently_remove=true&full_path=<nom renommé>` |
+| `Scripts/repos.sh pull` échoue : historiques sans lien (*unrelated histories*) | `git subtree push` recréait des commits que les fusions faites dans GitLab ne rejoignaient pas : après une demande de fusion fusionnée dans GitLab, les deux historiques n'avaient plus de lien | `repos.sh` synchronise désormais le contenu, et non l'historique ; `push` refuse si `main` contient une version jamais ramenée ([§3](#3-organisation-du-dépôt)) |
+| `node --test integration/` échoue sous Node 24 (`MODULE_NOT_FOUND`) | Node 24 ne cherche pas de tests dans un dossier passé à `node --test` : il le charge comme un module | Un motif de fichiers : `node --test "integration/*.int.js"` (script `test:integration`) |
+| Un échec de `integration-test` ou de `lint` n'aurait arrêté ni l'image ni le déploiement | `containerization` démarre dès que les jobs de ses `needs` réussissent, quoi que fassent les autres : ces deux jobs n'y étaient pas | Les ajouter à ses `needs`, à l'identique dans les 3 pipelines ([§6.2](#62-pipeline-des-applications)) |
+| `integration-test` d'inventory-app échoue alors que ses 9 tests passent : *« terminating connection due to administrator command »* | Une connexion inactive d'un pool `pg` coupée par le serveur ; sans écouteur `error`, `pg` la relance en exception non gérée, qui fait échouer tout le fichier | Un écouteur `error` sur chaque pool des tests (inventory-app et billing-app) : l'erreur est signalée, une requête qui échoue fait toujours échouer son test |
 
 ---
 
@@ -654,6 +702,11 @@ des variables à un pipeline.
 - RBAC ne peut pas limiter une création à un nom : le pipeline d'une application peut créer d'autres objets de ses
   types dans l'espace `code-keeper` (sans modifier ni supprimer ceux des autres), et les pods d'un tel objet
   pourraient lire les secrets de l'espace. Seul le code relu de `main` peut prendre ce rôle (OIDC).
+- Quatre défauts signalés par Trivy sont acceptés (`.trivyignore.yaml` du dépôt `infra`, raisons détaillées dans
+  [repos/infra/README.md](repos/infra/README.md)) : trafic sortant libre des nœuds (AWS-0104), écouteur HTTP de l'ALB
+  interne, joignable seulement par le lien VPC d'API Gateway (AWS-0054), API EKS publique mais limitée aux IP de
+  l'admin et du runner (AWS-0040), secrets Kubernetes sans clé KMS dédiée, EKS chiffrant déjà les données de son API
+  (AWS-0039).
 - L'approbation de production repose sur le droit de fusionner dans `main` : les environnements protégés (liste
   nominative d'approbateurs) sont réservés à GitLab Premium.
 - Le navigateur avertit sur le certificat de GitLab (CA du projet) tant que `ca.crt` n'y est pas importé.
