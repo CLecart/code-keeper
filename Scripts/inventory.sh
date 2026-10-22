@@ -21,6 +21,7 @@ COLUMNS_HEADER="REGION RUNNING OTHER-EC2 OTHER-EBS OTHER-EIP NAT ELB EKS RDS LAM
 count_region() {
   local r="$1"
   local q=(--region "$r" --output text)
+  # shellcheck disable=SC2016 # the backticks are JMESPath literals, not shell
   local not_tooling='!(Tags[?Key==`Stack` && Value==`bootstrap`])'
   printf '%s %s %s %s %s %s %s %s %s %s\n' "$r" \
     "$(aws ec2 describe-instances "${q[@]}" --filters Name=instance-state-name,Values=pending,running,stopping,shutting-down --query 'length(Reservations[].Instances[])')" \
@@ -39,6 +40,8 @@ regions="$(aws ec2 describe-regions --query 'Regions[].RegionName' --output text
 echo "# Inventory, $(date '+%F %H:%M:%S'), $(wc -w <<<"$regions") Regions"
 
 # Each line must hold the Region and nine numbers, otherwise an AWS call failed.
+# $regions is split on purpose (one Region per line); the single quotes keep $1 for bash -c.
+# shellcheck disable=SC2016,SC2086
 if ! rows="$(printf '%s\n' $regions | xargs -P 8 -I{} bash -c 'count_region "$1"' _ {} | sort)"; then
   echo "error: an AWS call failed during the inventory" >&2
   exit 2
