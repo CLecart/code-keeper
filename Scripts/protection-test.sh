@@ -25,7 +25,7 @@ GITLAB="https://$(terraform -chdir="$ROOT_DIR/bootstrap" output -raw gitlab_publ
 API="$GITLAB/api/v4"
 CA="$HOME/.local/share/code-keeper/pki/ca.crt"
 ROOT_TOKEN="$(cd "$ROOT_DIR/ansible" && ansible-vault view group_vars/all/vault.yml |
-  sed -n 's/^vault_gitlab_api_token: "\(.*\)"$/\1/p')"
+  sed -n -E 's/^vault_gitlab_api_token: *"?([^"]*)"?$/\1/p')"
 
 as_root() { curl -sS --cacert "$CA" -H "PRIVATE-TOKEN: $ROOT_TOKEN" "$@"; }
 as_dev() { curl -sS --cacert "$CA" -H "PRIVATE-TOKEN: $DEV_TOKEN" "$@"; }
