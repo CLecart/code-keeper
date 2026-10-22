@@ -19,3 +19,4 @@ resources:
   - billing-database.yaml
   - rabbitmq.yaml
   - network-policies.yaml
+  - resource-quota.yaml

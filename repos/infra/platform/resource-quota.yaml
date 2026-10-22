@@ -1,0 +1,14 @@
+# The application pipelines may create Services in this namespace (EKS access
+# entry AmazonEKSEditPolicy) but may only read this quota. A Service of type
+# LoadBalancer would make AWS create a load balancer outside Terraform: billed,
+# and blocking the deletion of the VPC. The application is reached only through
+# the internal ALB of Terraform, on the NodePort of api-gateway.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: no-load-balancers
+  labels:
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  hard:
+    services.loadbalancers: "0"
