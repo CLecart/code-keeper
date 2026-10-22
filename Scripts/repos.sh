@@ -59,7 +59,7 @@ for name in "${names[@]}"; do
       known=""
       while read -r commit; do
         if [[ "$(git -C "$ROOT" rev-parse --verify --quiet "$commit:repos/$name" || true)" == "$remote_tree" ]]; then
-          known=yes
+          known="$commit"
           break
         fi
       done < <(git -C "$ROOT" log --format=%H -- "repos/$name")
@@ -77,8 +77,13 @@ for name in "${names[@]}"; do
         echo "already up to date"
         continue
       fi
-      # The message of the last commit that changed the folder here.
-      git -C "$ROOT" log -1 --format=%B -- "repos/$name" | git -C "$clone" commit --quiet -F -
+      # Title: the last change of the folder here; body: every change published.
+      {
+        git -C "$ROOT" log -1 --format=%s -- "repos/$name"
+        echo
+        echo "From repos/$name of code-keeper:"
+        git -C "$ROOT" log --reverse --format='- %s' "$known..HEAD" -- "repos/$name"
+      } | git -C "$clone" commit --quiet -F -
       git -C "$clone" push --quiet origin main
       echo "main of $name is now $(git -C "$clone" rev-parse --short HEAD)"
       ;;
