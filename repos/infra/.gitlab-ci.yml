@@ -8,6 +8,8 @@
 #   production stages wait until a Maintainer (stakeholder) runs the manual job
 #   approve-production: only users allowed to merge into main may run it.
 # - Merge request: init without backend and validate only, with no AWS access.
+# - Push on another branch: validate only (no AWS access), unless a merge
+#   request already runs a pipeline for that branch.
 # - "Run pipeline" on main with DESTROY=true (only Maintainers may set a
 #   variable): the same stages delete both environments, production after approval.
 #
@@ -18,6 +20,9 @@ workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
 
 stages:
   - images
