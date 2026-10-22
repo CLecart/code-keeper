@@ -1,0 +1,156 @@
+# inventory-app: Node.js REST API for movies (CRUD on the inventory-db database).
+#
+# Stateless, so it runs as a Deployment scaled by a HorizontalPodAutoscaler
+# between 1 and 5 replicas on CPU usage. Reachable inside the cluster at
+# inventory-app:8080, the Service load-balancing across the replicas.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-app
+  labels:
+    app: inventory-app
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  type: ClusterIP
+  selector:
+    app: inventory-app
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-app
+  labels:
+    app: inventory-app
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  # No "replicas" field: the HorizontalPodAutoscaler below owns the replica
+  # count, and re-applying this file must not reset it.
+  selector:
+    matchLabels:
+      app: inventory-app
+  # Zero downtime: a new pod must be ready before an old one stops.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: inventory-app
+        app.kubernetes.io/part-of: code-keeper
+    spec:
+      # None of the containers calls the Kubernetes API.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread the replicas over both nodes when possible.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: inventory-app
+      containers:
+        - name: inventory-app
+          image: inventory-app
+          # The pod stays up 10 s after leaving the Service, the time for every
+          # node (kube-proxy) to stop sending it requests: no request is cut.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 10
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: DB_HOST
+              value: inventory-db
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: movies
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: inventory-db-secret
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: inventory-db-secret
+                  key: password
+          # The HTTP server only listens once the database answers (up to 60 s).
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          # /health checks the database: the pod leaves the Service while the
+          # database is unreachable...
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 4
+          # ...but is only restarted when the process itself stops answering.
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          # The CPU request is the reference of the autoscaler's percentage.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+              ephemeral-storage: 32Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+              ephemeral-storage: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: inventory-app
+  labels:
+    app: inventory-app
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: inventory-app
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    # Scale out when the average CPU usage exceeds 60 % of the request (100m).
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    # Scale back in after 1 minute of low load instead of the default 5.
+    scaleDown:
+      stabilizationWindowSeconds: 60

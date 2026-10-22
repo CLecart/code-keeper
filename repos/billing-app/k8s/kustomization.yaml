@@ -1,0 +1,9 @@
+# Manifests of the application, applied by the deploy jobs of .gitlab-ci.yml
+# with an "images" override (ECR registry and tag of the commit).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: code-keeper
+
+resources:
+  - billing-app.yaml

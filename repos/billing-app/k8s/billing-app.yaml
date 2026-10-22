@@ -1,0 +1,126 @@
+# billing-app: Node.js worker consuming "billing_queue" and storing every order
+# in the billing-db database. Its HTTP server (port 8080) serves /health and
+# GET /api/orders.
+#
+# StatefulSet with a single replica, as the subject requires: the consumer has
+# a stable identity (billing-app-0) and is never scaled horizontally, so the
+# orders are stored one at a time, in queue order.
+# Reachable inside the cluster at billing-app:8080.
+
+# Headless Service: DNS name of the pod and governing Service of the StatefulSet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: billing-app
+  labels:
+    app: billing-app
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  clusterIP: None
+  selector:
+    app: billing-app
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: billing-app
+  labels:
+    app: billing-app
+    app.kubernetes.io/part-of: code-keeper
+spec:
+  serviceName: billing-app
+  replicas: 1
+  selector:
+    matchLabels:
+      app: billing-app
+  template:
+    metadata:
+      labels:
+        app: billing-app
+        app.kubernetes.io/part-of: code-keeper
+    spec:
+      # None of the containers calls the Kubernetes API.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: billing-app
+          image: billing-app
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: DB_HOST
+              value: billing-db
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: billing_db
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: billing-db-secret
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: billing-db-secret
+                  key: password
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: RABBITMQ_PORT
+              value: "5672"
+            - name: RABBITMQ_QUEUE
+              value: billing_queue
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: username
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: password
+          # The HTTP server only listens once the database answers (up to 60 s).
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          # /health checks both the database and the RabbitMQ consumer.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 4
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+              ephemeral-storage: 32Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+              ephemeral-storage: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

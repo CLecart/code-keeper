@@ -1,0 +1,9 @@
+# hadolint configuration (https://github.com/hadolint/hadolint) - run with `make lint`.
+ignored:
+  # DL3018 "Pin versions in apk add": Alpine repositories only serve the latest build of a
+  # package for a given branch, so `apk add pkg=x.y.z-r0` breaks the build as soon as the
+  # package is updated. The package set is pinned by the base image tag (alpine:3.23) instead.
+  - DL3018
+  # DL3066 "Non-numeric user-id": USER is kept symbolic (app, postgres, rabbitmq) for
+  # readability; the users are created with fixed uids in the same image.
+  - DL3066

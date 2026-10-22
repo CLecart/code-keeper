@@ -1,0 +1,219 @@
+# Pipeline of an application of the code-keeper group: continuous integration
+# on every push and merge request, continuous deployment from the protected
+# main branch.
+#
+#   build -> test -> scan -> containerization -> deploy-staging -> approval -> deploy-production
+#
+# - Any branch or merge request: build, test and scan, without any AWS access.
+# - main (protected): the image is built, scanned and pushed to ECR (tag = short
+#   commit hash), deployed to staging, then to production once a Maintainer
+#   (stakeholder) runs the manual job approve-production.
+#
+# AWS access: each job of main exchanges its ID token for the role of this
+# project (OIDC, code-keeper-ci-<application>): push of its own image only, and
+# edit rights in the code-keeper namespace of the clusters (EKS access entry).
+#
+# The pipelines of the three applications are identical except for the two
+# variables below.
+
+variables:
+  APP_NAME: api-gateway-app
+  K8S_WORKLOAD: deployment/api-gateway
+  IMAGE: $ECR_REGISTRY/code-keeper/$APP_NAME
+  TRIVY_IMAGE: public.ecr.aws/aquasecurity/trivy:0.76.1
+
+# One pipeline per change: the merge request pipeline when a merge request is
+# open, otherwise the branch pipeline.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+stages:
+  - build
+  - test
+  - scan
+  - containerization
+  - deploy-staging
+  - approval
+  - deploy-production
+
+# GitLab SAST (Semgrep analyzer), available on GitLab Free: its job semgrep-sast
+# writes gl-sast-report.json, checked by sast-gate below.
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+
+default:
+  image: public.ecr.aws/docker/library/node:24-alpine
+
+.on-main: &on-main
+  if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"
+
+# OIDC: AWS reads the ID token from a file; AWS_ROLE_ARN and AWS_REGION come
+# from the protected CI variables of the project and of the group.
+.aws:
+  id_tokens:
+    AWS_ID_TOKEN:
+      aud: sts.amazonaws.com
+  before_script:
+    - printf '%s' "$AWS_ID_TOKEN" > /tmp/web-identity-token
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/web-identity-token
+    - export AWS_ROLE_SESSION_NAME="gitlab-${CI_PROJECT_NAME}-${CI_JOB_ID}"
+
+# ---- CI ------------------------------------------------------------------------
+
+# Installs the exact dependencies of package-lock.json and checks the syntax of
+# every source file.
+build:
+  stage: build
+  script:
+    - npm ci --no-audit --no-fund
+    - find src -name '*.js' -print -exec node --check {} \;
+  artifacts:
+    paths:
+      - node_modules/
+    expire_in: 1 hour
+
+# Unit tests (Node test runner); the JUnit report shows in the merge request.
+test:
+  stage: test
+  needs: [build]
+  script:
+    - node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=junit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+    expire_in: 1 week
+
+semgrep-sast:
+  stage: scan
+
+# Fails when the SAST report holds a High or Critical finding.
+sast-gate:
+  stage: scan
+  image: public.ecr.aws/docker/library/alpine:3.24
+  needs:
+    - job: semgrep-sast
+      artifacts: true
+  script:
+    - apk add --no-cache jq >/dev/null
+    - jq -r '.vulnerabilities[] | "\(.severity)\t\(.location.file):\(.location.start_line)\t\(.name)"' gl-sast-report.json
+    - test "$(jq '[.vulnerabilities[] | select(.severity == "Critical" or .severity == "High")] | length' gl-sast-report.json)" -eq 0
+
+# Known vulnerabilities of the dependencies (package-lock.json) and secrets in
+# the code: fails on a High or Critical vulnerability that already has a fix.
+dependency-scan:
+  stage: scan
+  needs: []
+  image:
+    name: $TRIVY_IMAGE
+    entrypoint: [""]
+  script:
+    - trivy fs --no-progress --scanners vuln,secret --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed .
+
+# Dockerfile best practices (rules ignored on purpose in .hadolint.yaml).
+dockerfile-lint:
+  stage: scan
+  needs: []
+  image: ghcr.io/hadolint/hadolint:v2.15.1-alpine
+  script:
+    - hadolint Dockerfile
+
+# ---- containerization (main only) -----------------------------------------------
+
+# Builds the image, scans it (Trivy, through the Docker socket of the builder
+# runner) and pushes it to ECR with the short commit hash as tag. The ECR
+# repositories are immutable: a tag already pushed is reused, never replaced.
+containerization:
+  stage: containerization
+  image: public.ecr.aws/docker/library/docker:29.9.2-cli
+  tags: [docker-build]
+  extends: .aws
+  needs: [test, sast-gate, dependency-scan, dockerfile-lint]
+  before_script:
+    - !reference [.aws, before_script]
+    - apk add --no-cache aws-cli >/dev/null
+  script:
+    - aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+    - |
+      if aws ecr describe-images --repository-name "code-keeper/$APP_NAME" --image-ids imageTag="$CI_COMMIT_SHORT_SHA" >/dev/null 2>&1; then
+        echo "$IMAGE:$CI_COMMIT_SHORT_SHA is already in ECR"
+      else
+        docker build --pull --provenance=false --sbom=false --tag "$IMAGE:$CI_COMMIT_SHORT_SHA" .
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image \
+          --no-progress --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$IMAGE:$CI_COMMIT_SHORT_SHA"
+        docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
+      fi
+    - echo "IMAGE_TAG=$CI_COMMIT_SHORT_SHA" > image.env
+  artifacts:
+    reports:
+      dotenv: image.env
+  rules:
+    - *on-main
+
+# ---- CD (main only) ---------------------------------------------------------------
+
+# Rolling update of the application in the code-keeper namespace of a cluster:
+# the new pods must be ready before the old ones stop (strategy and probes of
+# k8s/), and the job waits for the end of the rollout.
+.deploy:
+  image: public.ecr.aws/docker/library/alpine:3.24
+  extends: .aws
+  before_script:
+    - !reference [.aws, before_script]
+    - apk add --no-cache aws-cli kubectl >/dev/null
+  script:
+    - aws eks update-kubeconfig --name "code-keeper-$ENV" --alias "code-keeper-$ENV"
+    - mkdir -p .deploy
+    - |
+      cat > .deploy/kustomization.yaml <<EOF
+      apiVersion: kustomize.config.k8s.io/v1beta1
+      kind: Kustomization
+      resources:
+        - ../k8s
+      images:
+        - name: $APP_NAME
+          newName: $IMAGE
+          newTag: "$IMAGE_TAG"
+      EOF
+    - kubectl apply -k .deploy
+    - kubectl -n code-keeper rollout status "$K8S_WORKLOAD" --timeout=5m
+    - kubectl -n code-keeper get pods -l "app=${K8S_WORKLOAD#*/}" -o wide
+  rules:
+    - *on-main
+
+deploy-staging:
+  stage: deploy-staging
+  extends: .deploy
+  needs: [containerization]
+  variables:
+    ENV: staging
+  resource_group: staging
+  environment:
+    name: staging
+
+# Manual gate before production: running a manual job of main needs the right
+# to merge into main, so only the Maintainers (stakeholder, clecart) can approve.
+approve-production:
+  stage: approval
+  image: public.ecr.aws/docker/library/alpine:3.24
+  needs: [deploy-staging]
+  script:
+    - echo "Production approved by $GITLAB_USER_LOGIN"
+  when: manual
+  allow_failure: false
+  rules:
+    - *on-main
+
+deploy-production:
+  stage: deploy-production
+  extends: .deploy
+  needs: [approve-production, containerization]
+  variables:
+    ENV: prod
+  resource_group: production
+  environment:
+    name: production
