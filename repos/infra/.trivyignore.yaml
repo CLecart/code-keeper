@@ -1,0 +1,37 @@
+# Trivy ignore file of the iac-scan job (validate stage): the HIGH and CRITICAL
+# findings of `trivy config terraform/` that are accepted on purpose.
+#
+# Each entry only covers the file where Trivy reports the finding, so the same
+# issue anywhere else still fails the job. Paths are relative to terraform/;
+# terraform-aws-modules/... are the registry modules (vpc, eks) that Trivy
+# downloads to follow the module calls.
+misconfigurations:
+  # Unrestricted egress of the worker nodes (egress_all rule of the EKS module):
+  # the nodes pull the images (ECR, public registries of the platform charts) and
+  # call the AWS APIs through the NAT gateway, without VPC endpoints (vpc.tf);
+  # none of these services has a fixed address range.
+  - id: AWS-0104
+    paths:
+      - terraform-aws-modules/eks/aws/node_groups.tf
+
+  # HTTP listener (alb.tf): the ALB is internal, in the private subnets, and only
+  # the API Gateway VPC link may reach it; clients reach API Gateway in HTTPS. An
+  # ACM certificate for the ALB would need a domain name (apigateway.tf).
+  - id: AWS-0054
+    paths:
+      - modules/environment/alb.tf
+
+  # Public EKS API endpoint (eks.tf): limited to eks_api_allowed_cidrs, the admin
+  # machine and the GitLab runner, which are outside the VPC (the variable refuses
+  # 0.0.0.0/0); the nodes use the private endpoint.
+  - id: AWS-0040
+    paths:
+      - terraform-aws-modules/eks/aws/main.tf
+
+  # No encryption of the Kubernetes secrets with a dedicated KMS key (eks.tf,
+  # create_kms_key = false): a key costs 1 USD/month and waits 7 days before its
+  # deletion, at every destroy; EKS already encrypts all Kubernetes API data by
+  # default since version 1.28.
+  - id: AWS-0039
+    paths:
+      - terraform-aws-modules/eks/aws/main.tf

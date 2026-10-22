@@ -27,6 +27,37 @@ Tout le reste (types et nombre de machines, services, réglages) est identique.
 - Le nom du stockage d'état et les IP autorisées sur l'API EKS viennent de variables CI protégées, pas du code.
 - Les mots de passe des bases et de RabbitMQ sont tirés au hasard dans le cluster par `scripts/deploy-platform.sh`, au premier déploiement. Ils ne sont jamais affichés ni écrits dans Git.
 
+## Étape validate : syntaxe et bonnes pratiques
+
+Trois jobs, sans aucun accès AWS, dans chaque pipeline (demande de fusion, `main`, suppression) :
+
+| Job | Ce qu'il vérifie | Réglages |
+|---|---|---|
+| `validate` | Syntaxe et format : `terraform validate` des deux environnements, `terraform fmt -check` | — |
+| `tflint` | Bonnes pratiques Terraform (TFLint) : déclarations inutilisées, versions des modules et des fournisseurs figées, variables typées, syntaxe obsolète | `.tflint.hcl` : jeu de règles `terraform` intégré à TFLint, préréglage `recommended` ; aucun greffon téléchargé |
+| `iac-scan` | Bonnes pratiques de sécurité (Trivy) : échoue sur un défaut de gravité haute ou critique, dans notre code et dans les modules du registre (`vpc`, `eks`) | `.trivyignore.yaml` : les exceptions assumées ci-dessous |
+
+Exceptions assumées, chacune limitée au fichier où Trivy la signale : le même défaut ailleurs fait échouer le job.
+
+| Règle | Où | Pourquoi |
+|---|---|---|
+| AWS-0104 : trafic sortant sans restriction | Groupe de sécurité des nœuds (module `eks`) | Les nœuds tirent les images et appellent les API AWS par la passerelle NAT, sans point de terminaison VPC : ces services n'ont pas de plage d'adresses fixe |
+| AWS-0054 : écouteur HTTP | ALB (`alb.tf`) | ALB interne, joignable seulement par le lien VPC d'API Gateway ; les clients arrivent en HTTPS sur API Gateway |
+| AWS-0040 : API EKS publique | Cluster (module `eks`) | Ouverte seulement aux IP de la machine d'administration et du runner (`eks_api_allowed_cidrs`, jamais `0.0.0.0/0`) |
+| AWS-0039 : secrets sans clé KMS dédiée | Cluster (module `eks`) | Coût : 1 USD/mois par clé et 7 jours d'attente avant sa suppression ; EKS chiffre déjà par défaut toutes les données de l'API Kubernetes depuis la version 1.28 |
+
+Trivy applique les règles intégrées à sa version figée (`--skip-check-update`) : un commit donne le même résultat dans tous les pipelines, suppression comprise. La ligne `ERROR ... Falling back to embedded checks` de son journal est donc normale.
+
+En local, depuis ce dossier, avec les mêmes commandes que le pipeline :
+
+```bash
+docker run --rm -v "$PWD:/src:ro" -w /src ghcr.io/terraform-linters/tflint:v0.64.0 \
+  --chdir=terraform --recursive --config=/src/.tflint.hcl
+docker run --rm -v "$PWD:/src:ro" -w /src public.ecr.aws/aquasecurity/trivy:0.76.1 config \
+  --skip-check-update --skip-dirs "**/.terraform" --exit-code 1 --severity HIGH,CRITICAL \
+  --ignorefile .trivyignore.yaml terraform/
+```
+
 ## Scripts
 
 | Script | Rôle |

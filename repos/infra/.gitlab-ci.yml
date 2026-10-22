@@ -4,12 +4,17 @@
 #
 #   images -> init -> validate -> plan -> apply-staging -> approval -> apply-production
 #
+# validate checks the syntax and formatting of the Terraform code (terraform
+# validate and fmt) and its best practices: TFLint (.tflint.hcl) and the Trivy
+# security scan (.trivyignore.yaml). It runs in every pipeline, with no AWS access.
+#
 # - Push on main (protected): creates or updates both environments. The
 #   production stages wait until a Maintainer (stakeholder) runs the manual job
 #   approve-production: only users allowed to merge into main may run it.
-# - Merge request: init without backend and validate only, with no AWS access.
-# - Push on another branch: validate only (no AWS access), unless a merge
-#   request already runs a pipeline for that branch.
+# - Merge request: init without backend and the validate stage only, with no
+#   AWS access.
+# - Push on another branch: the validate stage only (no AWS access), unless a
+#   merge request already runs a pipeline for that branch.
 # - "Run pipeline" on main with DESTROY=true (only Maintainers may set a
 #   variable): the same stages delete both environments, production after approval.
 #
@@ -153,6 +158,41 @@ validate:
         terraform -chdir="terraform/envs/$env" init -backend=false
         terraform -chdir="terraform/envs/$env" validate
       done
+
+# Terraform best practices that validate does not check (.tflint.hcl): unused
+# declarations, pinned module and provider versions, typed variables...
+tflint:
+  stage: validate
+  image:
+    name: ghcr.io/terraform-linters/tflint:v0.64.0
+    entrypoint: [""]
+  script:
+    # Logs the ruleset in use (terraform, bundled): the lint prints nothing when
+    # it finds nothing.
+    - tflint --version
+    # Absolute path: with --recursive, a relative --config is looked up in each
+    # module directory.
+    - tflint --chdir=terraform --recursive --config="$CI_PROJECT_DIR/.tflint.hcl"
+
+# Security best practices (Trivy): fails on a HIGH or CRITICAL misconfiguration
+# that .trivyignore.yaml does not accept, in our code and in the registry
+# modules (vpc, eks), which Trivy downloads to follow the module calls.
+# --skip-check-update: the checks built into this Trivy version, so a commit
+# gets the same result in every pipeline, a destroy included; Trivy then logs
+# "Falling back to embedded checks" as an error, which is expected.
+# --skip-dirs: after a local terraform init, Trivy would read the modules from
+# .terraform, under other paths than those of .trivyignore.yaml.
+iac-scan:
+  stage: validate
+  variables:
+    # A variable, as in the application pipelines: the Renovate custom manager
+    # updates it.
+    TRIVY_IMAGE: public.ecr.aws/aquasecurity/trivy:0.76.1
+  image:
+    name: $TRIVY_IMAGE
+    entrypoint: [""]
+  script:
+    - trivy config --skip-check-update --skip-dirs "**/.terraform" --exit-code 1 --severity HIGH,CRITICAL --ignorefile .trivyignore.yaml terraform/
 
 # ---- plan --------------------------------------------------------------------
 
