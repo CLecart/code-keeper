@@ -1,24 +1,31 @@
 #!/usr/bin/env bash
-# Proves that a rolling update cuts no request: while the pods of an
-# application are replaced (kubectl rollout restart, the same rolling update as
-# a deployment by the pipeline), requests are sent without pause through the
-# public API Gateway, and every answer other than HTTP 200 is counted.
+# Proves that replacing the pods of an application cuts no request: requests
+# are sent without pause through the public API Gateway while the pods are
+# replaced, and every answer other than HTTP 200 is counted.
 #
-# Usage: Scripts/zero-downtime-test.sh staging|prod api-gateway|inventory-app
+# Usage: Scripts/zero-downtime-test.sh staging|prod api-gateway|inventory-app [rollout|drain]
 #   api-gateway    requests GET /health
 #   inventory-app  requests GET /api/movies/ with a Cognito token
+#   rollout        (default) kubectl rollout restart: the same rolling update as
+#                  a deployment by the pipeline
+#   drain          kubectl drain of the node of a replica, limited to the pods of
+#                  the application: what a node maintenance (EKS node group
+#                  update) does to them; the node is uncordoned at the end
 #
-# Exit status: 0 when every request answered 200 during the whole rollout.
+# Exit status: 0 when every request answered 200 during the whole test.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 env="${1:-}"
 app="${2:-}"
-[[ "$env" == staging || "$env" == prod ]] || { echo "usage: $0 staging|prod api-gateway|inventory-app" >&2; exit 2; }
+mode="${3:-rollout}"
+usage="usage: $0 staging|prod api-gateway|inventory-app [rollout|drain]"
+[[ "$env" == staging || "$env" == prod ]] || { echo "$usage" >&2; exit 2; }
+[[ "$mode" == rollout || "$mode" == drain ]] || { echo "$usage" >&2; exit 2; }
 case "$app" in
   api-gateway) path=/health; token="" ;;
   inventory-app) path=/api/movies/; token="$("$ROOT_DIR/Scripts/api-token.sh" "$env")" ;;
-  *) echo "usage: $0 staging|prod api-gateway|inventory-app" >&2; exit 2 ;;
+  *) echo "$usage" >&2; exit 2 ;;
 esac
 
 region="${AWS_REGION:-eu-west-3}"
@@ -28,7 +35,18 @@ url="$(aws apigatewayv2 get-apis --region "$region" \
 aws eks update-kubeconfig --region "$region" --name "code-keeper-$env" --alias "$context" >/dev/null
 
 results="$(mktemp)"
-trap 'rm -f "$results"' EXIT
+sender=""
+node=""
+# Also on failure: stop the requests, and never leave a node cordoned.
+cleanup() {
+  if [[ -n "$sender" ]]; then
+    touch "$results.stop"
+    wait "$sender" || true
+  fi
+  [[ -z "$node" ]] || kubectl --context "$context" uncordon "$node" || true
+  rm -f "$results" "$results.stop"
+}
+trap cleanup EXIT
 
 # About 5 requests per second, below the API Gateway throttling (20/s).
 send_requests() {
@@ -40,16 +58,27 @@ send_requests() {
   done
 }
 
-echo "== $app in $env: requests to $url during a rolling update"
+echo "== $app in $env: requests to $url during a $mode"
 send_requests &
 sender=$!
 sleep 5
-kubectl --context "$context" -n code-keeper rollout restart "deployment/$app"
+if [[ "$mode" == rollout ]]; then
+  kubectl --context "$context" -n code-keeper rollout restart "deployment/$app"
+else
+  # The node of the first replica. Like a node update, kubectl drain goes
+  # through the eviction API, which honours the PodDisruptionBudget.
+  node="$(kubectl --context "$context" -n code-keeper get pods -l "app=$app" \
+    -o jsonpath='{.items[0].spec.nodeName}')"
+  kubectl --context "$context" drain "$node" --pod-selector "app=$app" \
+    --ignore-daemonsets --delete-emptydir-data --timeout=5m
+fi
+# Until every replica is ready again.
 kubectl --context "$context" -n code-keeper rollout status "deployment/$app" --timeout=5m
-# Keep sending a little after the end of the rollout (old pods still terminating).
+# Keep sending a little after the end (old pods still terminating).
 sleep 15
 touch "$results.stop"
 wait "$sender"
+sender=""
 rm -f "$results.stop"
 
 total="$(wc -l <"$results")"
