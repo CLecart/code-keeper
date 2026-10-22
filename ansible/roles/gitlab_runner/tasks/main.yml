@@ -200,9 +200,20 @@
     or item.json.access_level != item.item.access_level
   changed_when: true
 
-# Old images and volumes of finished jobs fill the 30 GB disk otherwise.
+# The containers and volumes the runner leaves behind (clear-docker-cache only
+# prunes what the runner labelled, never the images the jobs pulled).
 - name: Clean the Docker cache of the jobs every week
   ansible.builtin.cron:
     name: clear-docker-cache
     special_time: weekly
     job: /usr/share/gitlab-runner/clear-docker-cache prune
+
+# The job images pile up otherwise: the Renovate "full" image alone is about
+# 10 GB on the 30 GB disk, and a second version of it no longer fits. The jobs
+# pull their image again anyway (pull_policy always), and the machine is
+# stopped every evening: the unused images go at every start, once Docker is up.
+- name: Remove the unused job images at every start of the machine
+  ansible.builtin.cron:
+    name: prune-docker-images
+    special_time: reboot
+    job: sleep 120 && /usr/bin/docker image prune --all --force > /dev/null
