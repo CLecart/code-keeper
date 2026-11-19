@@ -29,7 +29,7 @@
     - gitlab_oidc
 
 # API calls only, run from the admin machine.
-- name: Create the GitLab group, its members and the four projects
+- name: Create the GitLab group, its members and the five projects
   hosts: controller
   gather_facts: false
   roles:

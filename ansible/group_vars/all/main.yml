@@ -32,7 +32,7 @@ gitlab_users:
     email: renovate-bot@example.com
     admin: false
 
-# Group holding the four repositories, one per application plus the infrastructure.
+# Group holding the five repositories: one per application, infra and renovate.
 gitlab_group:
   name: code-keeper
   path: code-keeper
@@ -48,7 +48,7 @@ gitlab_projects:
   - name: infra
     description: Terraform infrastructure of the staging and production environments
   # Maintenance: runs Renovate every working day to keep the dependencies of the
-  # four repositories up to date and to report security advisories.
+  # five repositories up to date and to report security advisories.
   - name: renovate
     description: Renovate bot, automated dependency updates of the group
     variables:

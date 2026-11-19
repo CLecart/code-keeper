@@ -23,7 +23,7 @@ gitlab_ci_variable_flags:
   raw: true
   variable_type: env_var
 
-# Variables shared by the four projects (values from the bootstrap outputs).
+# Variables shared by the five projects (values from the bootstrap outputs).
 gitlab_group_variables:
   - key: AWS_REGION
     value: "{{ aws_region }}"
