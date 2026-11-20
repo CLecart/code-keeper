@@ -49,24 +49,38 @@ for name in "${names[@]}"; do
   files="$work/$name.files"
   mkdir "$files"
   echo "== $action $name ($url)"
-  git clone --quiet --branch main "$url" "$clone"
+  # A project just created by Ansible is empty: it has no main branch yet.
+  # ls-remote --exit-code answers 2 when the branch is missing, other codes on
+  # an error (network, rights), which stop the script.
+  empty=""
+  if git ls-remote --exit-code --heads "$url" main >/dev/null; then
+    git clone --quiet --branch main "$url" "$clone"
+  else
+    rc=$?
+    [[ $rc -eq 2 ]] || exit "$rc"
+    empty=1
+    git -c init.defaultBranch=main clone --quiet "$url" "$clone"
+    git -C "$clone" symbolic-ref HEAD refs/heads/main
+  fi
 
   case "$action" in
     push)
-      # Has this repository ever had the content of main? Trees are named by
-      # their content, so the same files give the same tree in both repositories.
-      remote_tree="$(git -C "$clone" rev-parse 'HEAD^{tree}')"
       known=""
-      while read -r commit; do
-        if [[ "$(git -C "$ROOT" rev-parse --verify --quiet "$commit:repos/$name" || true)" == "$remote_tree" ]]; then
-          known="$commit"
-          break
+      if [[ -z "$empty" ]]; then
+        # Has this repository ever had the content of main? Trees are named by
+        # their content, so the same files give the same tree in both repositories.
+        remote_tree="$(git -C "$clone" rev-parse 'HEAD^{tree}')"
+        while read -r commit; do
+          if [[ "$(git -C "$ROOT" rev-parse --verify --quiet "$commit:repos/$name" || true)" == "$remote_tree" ]]; then
+            known="$commit"
+            break
+          fi
+        done < <(git -C "$ROOT" log --format=%H -- "repos/$name")
+        if [[ -z "$known" ]]; then
+          echo "error: main of $name holds changes that repos/$name never had (merged in GitLab?):" >&2
+          echo "       run Scripts/repos.sh pull $name first" >&2
+          exit 1
         fi
-      done < <(git -C "$ROOT" log --format=%H -- "repos/$name")
-      if [[ -z "$known" ]]; then
-        echo "error: main of $name holds changes that repos/$name never had (merged in GitLab?):" >&2
-        echo "       run Scripts/repos.sh pull $name first" >&2
-        exit 1
       fi
       # The committed files of the folder only (git archive: nothing ignored or
       # uncommitted), in place of the files of main.
@@ -81,13 +95,21 @@ for name in "${names[@]}"; do
       {
         git -C "$ROOT" log -1 --format=%s -- "repos/$name"
         echo
-        echo "From repos/$name of code-keeper:"
-        git -C "$ROOT" log --reverse --format='- %s' "$known..HEAD" -- "repos/$name"
+        if [[ -n "$known" ]]; then
+          echo "From repos/$name of code-keeper:"
+          git -C "$ROOT" log --reverse --format='- %s' "$known..HEAD" -- "repos/$name"
+        else
+          echo "First publication of repos/$name of code-keeper."
+        fi
       } | git -C "$clone" commit --quiet -F -
       git -C "$clone" push --quiet origin main
       echo "main of $name is now $(git -C "$clone" rev-parse --short HEAD)"
       ;;
     pull)
+      if [[ -n "$empty" ]]; then
+        echo "error: main of $name does not exist yet, nothing to pull" >&2
+        exit 1
+      fi
       if ! git -C "$ROOT" diff --quiet HEAD -- "repos/$name"; then
         echo "error: repos/$name has uncommitted changes" >&2
         exit 1
